@@ -1,33 +1,26 @@
 import numpy as np
 import matplotlib.pyplot as plt
-
-signal = np.load('E_synthetic_k5_Pdot2_with_inhibitory.npy')
-
-r = .2
-tau_E = 1.
-P = .2
-k = 60
-
-T = 10
-dt = .01
-
-t = np.arange(0, T + dt, dt)
+import torch
+from torchviz import make_dot
+from gaussian import Gaussian
 
 def sig(x):
-    return 1/(1 + np.exp(-x))
+    return 1/(1 + torch.exp(-x))
+
+def tanh(x):
+    return 2*sig(2*x) - 1
 
 def dedt(E):
     # de = (-E + (1 - r*E)*sig(w_ee*E - w_ei*I + P)) / tau_E
     de = (-E + sig(k*E + k*P)) / tau_E
     return de
 
-def d_dedt(E):
-    s =  sig(k*E + k*P)
-    dde = (-1 / tau_E) * s * (1 - s)
-    
-    return dde
-
 var_nodes, factor_nodes = {}, {}
+
+class Message:
+    def __init__(self, eta = torch.tensor([[0.]]), lmbda = torch.tensor([[0.]])):
+        self.eta = eta
+        self.lmbda = lmbda
 
 class Variable:
     def __init__(self, var_id, mu, sigma, left_dynamics_id, right_dynamics_id, obs_id):
@@ -35,8 +28,11 @@ class Variable:
         self.mu = mu
         self.sigma = sigma
         self.factor_ids = [obs_id, left_dynamics_id, right_dynamics_id]
-        self.eta = np.zeros_like(mu)
-        self.lmbda = np.zeros_like(sigma)
+        self.eta = torch.zeros_like(mu, requires_grad=True)
+        self.lmbda = torch.zeros_like(sigma, requires_grad=True)
+
+        # Inbox stores messages from incoming factors, with the factor id as key
+        self.inbox = {}
 
     def get_mu(self):
         return self.mu
@@ -50,26 +46,33 @@ class Variable:
     def get_lmbda(self):
         return self.lmbda
 
+
     def belief_update(self):
-        valid_factors = [fid for fid in self.factor_ids if fid != -1]
+        eta_here, lmbda_here = torch.tensor([[0.0]]), torch.tensor([[0.0]])
+
+        for key, mesaj  in self.inbox.items():
+            eta_here += mesaj.eta
+            lmbda_here += mesaj.lmbda
         
-        self.eta = np.sum([factor_nodes[fid].get_eta() for fid in valid_factors], axis=0)
-        self.lmbda = np.sum([factor_nodes[fid].get_lmbda() for fid in valid_factors], axis=0)
+        if lmbda_here == 0.0: print('lambda is 0.. problem')
 
-        self.sigma = np.linalg.inv(self.lmbda)
-        self.mu = self.sigma @ self.eta
+        self.eta = eta_here
+        self.lmbda = lmbda_here
 
-    def update_message(self):
+        self.sigma = torch.linalg.inv(self.lmbda)
+        self.mu = self.sigma * self.eta
+
+    def compute_messages(self):
         self.belief_update()
-        up = self.factor_ids[1]
+        
+        for fid, mesaj in self.inbox.items():
+            belief_eta, belief_lmbda = torch.clone(self.eta), torch.clone(self.lmbda)
+            in_eta, in_lambda = mesaj.eta, mesaj.lmbda
 
-        if up == -1:
-            self.eta, self.lmbda = np.zeros_like(self.eta), np.zeros_like(self.lmbda)
-        else:
-            in_eta, in_lambda = factor_nodes[up].get_eta(), factor_nodes[up].get_lmbda()
+            belief_eta -= in_eta
+            belief_lmbda -= in_lambda
 
-            self.eta -= in_eta
-            self.lmbda -= in_lambda
+            factor_nodes[fid].inbox[self.var_id] = Message(belief_eta, belief_lmbda)
 
     def __str__(self):
         return f'Variable {self.var_id} connected to {self.factor_ids}, with mu = {self.mu} and sigma = {self.sigma}'
@@ -82,24 +85,18 @@ class ObservationFactor:
         self.var_id = var_id
 
         # Jacobian
-        J = np.array([[1.]])
+        J = torch.tensor([[1.]])
 
         self.eta = (J.T @ lmbda_in) * z
         self.lmbda = (J.T @ lmbda_in) @ J
-        self.N_sigma = np.sqrt(lmbda_in[0,0])
+        self.N_sigma = torch.sqrt(lmbda_in[0,0])
 
-        self.var_eta = self.eta
-        self.var_lmbda = self.lmbda
-
-    def get_eta(self):
-        return self.var_eta
-    
-    def get_lmbda(self):
-        return self.var_lmbda
+        # This is kind of useless since the obs. factor doesnt do anything with the messages
+        self.inbox = {}
     
     def huber_scale(self):
         r = self.z - var_nodes[self.var_id].mu
-        M = np.sqrt(r * self.lmbda_in[0,0] * r)
+        M = torch.sqrt(r * self.lmbda_in[0,0] * r)
 
         if M > self.N_sigma:
             kR = (2 * self.N_sigma / M) - (self.N_sigma ** 2 / M ** 2)
@@ -107,27 +104,9 @@ class ObservationFactor:
         
         return 1
 
-    def update_message(self):
+    def compute_messages(self):
         kR = self.huber_scale()
-        self.var_eta = self.eta * kR
-        self.var_lmbda = self.lmbda * kR
-
-    # This derivation can be found in ch. 3.3
-    # 'Ortiz, J. (2023). Gaussian Belief Propagation for Real-Time Decentralised Inference. Phd Thesis.'
-    def huber_scale(self):
-        r = self.z - var_nodes[self.var_id].get_mu()[0,0]
-        M = np.sqrt(r * self.lmbda_in[0,0] * r)
-
-        if M > self.N_sigma:
-            kR = (2 * self.N_sigma / M) - (self.N_sigma ** 2 / M ** 2)
-            return kR
-        
-        return 1
-
-    def update_message(self):
-        kR = self.huber_scale()
-        self.var_eta = self.eta * kR
-        self.var_lmbda = self.lmbda * kR
+        var_nodes[self.var_id].inbox[self.f_id] = Message(self.eta * kR, self.lmbda * kR)
 
     def __str__(self):
         return f'Observation factor with connected to {self.var_id} and z = {self.z} '
@@ -139,17 +118,24 @@ class DynamicsFactor:
         self.Etp_id = Etp_id
         self.f_id = f_id
         self.lmbda_in = lmbda_in
-        self.out_eta = np.array([[0.0]])
-        self.out_lmbda = np.array([[0.0]])
+        self.out_eta = torch.tensor([[0.0]])
+        self.out_lmbda = torch.tensor([[0.0]])
 
-        self.E = var_nodes[Et_id].mu[0,0]
+        self.inbox = {}
 
-        J = np.array([[1 + dt * d_dedt(self.E), -1]])
-        z = 0
-        self.eta = (J.T @ lmbda_in) * z
+        Et = var_nodes[Et_id].mu[0,0].clone().detach().requires_grad_(True)
+        Etp = var_nodes[Etp_id].mu[0,0].clone().detach().requires_grad_(True)
+        self.h = torch.abs(Etp - (Et + dedt(Et)))
+        self.h.backward()
+
+        # Autograd magic
+        J = torch.tensor([[Et.grad, Etp.grad]])
+
+        x0 = torch.tensor([Et, Etp])
+        self.eta = J.T @ lmbda_in * ((J @ x0) - self.h) 
         self.lmbdap = (J.T @ lmbda_in) @ J
 
-        self.N_sigma = np.sqrt(lmbda_in[0,0])
+        self.N_sigma = torch.sqrt(lmbda_in[0,0])
 
     def get_eta(self): 
         return self.out_eta
@@ -158,8 +144,8 @@ class DynamicsFactor:
         return self.out_lmbda
     
     def huber_scale(self):
-        r = 0 - (var_nodes[self.Etp_id].mu - var_nodes[self.Et_id].mu)
-        M = np.sqrt(r * self.lmbda_in[0,0] * r)
+        r = 0 - (self.h)
+        M = torch.sqrt(r * self.lmbda_in[0,0] * r)
 
         if M > self.N_sigma:
             k_r = (2 * self.N_sigma / M) - (self.N_sigma ** 2 / M ** 2)
@@ -167,12 +153,36 @@ class DynamicsFactor:
         
         return 1
     
-    def update_message(self):
+    def _compute_message_going_right(self):
         in_eta, in_lmbda = var_nodes[self.Et_id].eta, var_nodes[self.Et_id].lmbda
         k_r = self.huber_scale()
 
         # Compute the eta and lambda by var-factor rule and then scale
-        eta_here, lambda_here = np.copy(self.eta), np.copy(self.lmbdap)
+        eta_here, lambda_here = torch.clone(self.eta), torch.clone(self.lmbdap)
+
+        eta_here[0] = self.eta[0] + in_eta
+        lambda_here[0,0] = self.lmbdap[0,0] + in_lmbda
+
+        eta_here *= k_r
+        lambda_here *= k_r
+
+        eta_b, eta_a = eta_here
+        lambda_ba, lambda_bb = lambda_here[0]
+        lambda_aa, lambda_ab = lambda_here[1]
+
+        # Eq. 2.60 and 2.61 in Ortiz. 2003
+        lambda_ab_lambda_bbinv = lambda_ab * 1/lambda_bb
+        out_eta = torch.tensor([eta_a - (lambda_ab_lambda_bbinv * eta_b)])
+        out_lmbda = torch.tensor([lambda_aa - (lambda_ab_lambda_bbinv * lambda_ba)]) 
+
+        return Message(out_eta, out_lmbda)
+    
+    def _compute_message_going_left(self):
+        in_eta, in_lmbda = var_nodes[self.Etp_id].eta, var_nodes[self.Etp_id].lmbda
+        k_r = self.huber_scale()
+
+        # Compute the eta and lambda by var-factor rule and then scale
+        eta_here, lambda_here = torch.clone(self.eta), torch.clone(self.lmbdap)
 
         eta_here[1] = self.eta[1] + in_eta
         lambda_here[1,1] = self.lmbdap[1,1] + in_lmbda
@@ -186,8 +196,14 @@ class DynamicsFactor:
 
         # Eq. 2.60 and 2.61 in Ortiz. 2003
         lambda_ab_lambda_bbinv = lambda_ab * 1/lambda_bb
-        self.out_eta = np.array([eta_a - (lambda_ab_lambda_bbinv * eta_b)])
-        self.out_lmbda = np.array([lambda_aa - (lambda_ab_lambda_bbinv * lambda_ba)])
+        out_eta = torch.tensor([eta_a - (lambda_ab_lambda_bbinv * eta_b)])
+        out_lmbda = torch.tensor([lambda_aa - (lambda_ab_lambda_bbinv * lambda_ba)]) 
+
+        return Message(out_eta, out_lmbda)
+    
+    def compute_messages(self):
+        var_nodes[self.Etp_id].inbox[self.f_id] = self._compute_message_going_right()
+        var_nodes[self.Et_id].inbox[self.f_id] = self._compute_message_going_left()
 
     def __str__(self):
         return f'Dynamics Factor {self.f_id} connecting {self.Et_id} to {self.Etp_id}'
@@ -199,40 +215,71 @@ def print_fg(vars, factors):
 
 def update_observational_factor(key):
     if not isinstance(key, tuple):
-        factor_nodes[key].update_message()
+        factor_nodes[key].compute_messages()
 
 def update_variable_belief(key):
-    var_nodes[key].update_message()
+    var_nodes[key].compute_messages()
 
 def update_dynamics_factor(key):
     if isinstance(key, tuple):
-        factor_nodes[key].update_message()
+        factor_nodes[key].compute_messages()
 
 if __name__ == "__main__":
-    sigma_smoothness = 0.01
-    sigma_obs = 2
+    sigma_smoothness = 1.5e3
+    sigma_obs = 1.75e3
 
-    for i in range(len(t)):
-        var_nodes[i] = Variable(i, np.array([[0.]]), np.array([[0.]]), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i, i+1), i)
-        factor_nodes[i] = ObservationFactor(i, i, signal[i], np.array([[sigma_obs ** -2]]))
+    signal = np.load('E_synthetic_k5_Pdot2_noisy.npy')
 
-        if i+1 < len(t):
-            factor_nodes[(i, i+1)] = DynamicsFactor((i, i+1), np.array([[sigma_smoothness ** -2]]), i, i+1)
+    r = .2
+    tau_E = 1.
+    P = .2
+    k = 5.
 
-    # print_fg(factor_nodes, var_nodes)
+    T = 10
+    dt = .01
+    iters = 10     
 
-    for key in factor_nodes:
-        update_observational_factor(key)
+    t = np.arange(0, T + dt, dt)
+
+    E0 = 0.2
+
+    for iters in [10]:
+
+        for i in range(len(t)):
+            var_nodes[i] = Variable(i, torch.tensor([[E0]], requires_grad=True), torch.tensor([[0.0]], requires_grad=True), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i, i+1), -1)
+            factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]))
+
+        for i in range(len(t)):
+            if i+1 < len(t):
+                factor_nodes[(i, i+1)] = DynamicsFactor((i, i+1), torch.tensor([[sigma_smoothness ** -2]]), i, i+1)
+
+        # print_fg(var_nodes, factor_nodes)
+
+        for i in range(iters):
+            for key in factor_nodes:
+                update_observational_factor(key)
+            
+            for key in var_nodes:
+                update_variable_belief(key)
+                    
+            for key in factor_nodes:
+                update_dynamics_factor(key)
+
+        # for _ in range(iters):
+        #     # Sweep from left to right in time
+        #     for i in range(len(t)):
+        #         update_observational_factor(i)
+        #         update_variable_belief(i)
+
+        #         # Update dynamics factors
+        #         if i+1 < len(t):
+        #             update_dynamics_factor((i, i+1))
     
-    for key in var_nodes:
-        update_variable_belief(key)
-    
-    for key in factor_nodes:
-        update_dynamics_factor(key)
+        recons_signal = torch.tensor([var_nodes[key].mu[0] for key in var_nodes])
+        print(recons_signal)
+        plt.plot(recons_signal, label=rf'Iterations, iters = {iters}')
 
-
-    recons_signal = np.array([var_nodes[key].mu[0] for key in var_nodes])
-    plt.plot(signal)
-    plt.plot(recons_signal)
+    plt.plot(signal, label='Noisy Signal')
+    # plt.plot(clean_signal, label='Clean Signal')
+    plt.legend()
     plt.show()
-        
