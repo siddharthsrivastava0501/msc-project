@@ -39,7 +39,6 @@ class Variable:
         '''
         Belief update for a variable node is simply the product of all received messages, Ortiz (2003) eq. 2.13
         '''
-
         eta, lmbda = torch.zeros_like(self.eta), torch.zeros_like(self.lmbda)
 
         # Consume messages from the inbox and update belief
@@ -65,7 +64,6 @@ class Variable:
                 in_eta, in_lmbda = self.inbox[fid].eta, self.inbox[fid].lmbda
                 out_eta, out_lmbda = self.eta - in_eta, self.lmbda - in_lmbda
 
-                # print(f'Actually worked, sending {out_eta} and {out_lmbda} to {fid}')
                 factor_nodes[fid].inbox[self.var_id] = Gaussian(out_eta, out_lmbda)
             except KeyError:
                 # print(f'Landed here, sending {self.eta} and {self.lmbda} to {fid}')
@@ -83,7 +81,7 @@ class ObservationFactor:
         J = torch.tensor([[1.]])
         self.eta = (J.T @ lmbda_in) * z
         self.lmbda = (J.T @ lmbda_in) @ J
-        self.N_sigma = torch.sqrt(self.lmbda_in)
+        self.N_sigma = torch.sqrt(self.lmbda_in[0,0])
 
         self.out_eta, self.out_lmbda = self.eta, self.lmbda
         self.inbox = {}
@@ -124,27 +122,23 @@ class DynamicsFactor:
         self.N_sigma = torch.sqrt(lmbda_in[0,0])
         self.z = 0
 
-        J = torch.tensor([[-1., 1.]])
-        self.eta = J.T @ self.lmbda_in * 0
+    def linearise(self):
+        # Bunch of computations to linearise this factor (Ortiz (2003) eqns. 2.46 and 2.47)
+        Et_mu, _ = canonical_to_moments(self.inbox[self.Et_id].eta, self.inbox[self.Et_id].lmbda)
+        Etp_mu, _ = canonical_to_moments(self.inbox[self.Etp_id].eta, self.inbox[self.Etp_id].lmbda)
+
+        Et_mu = Et_mu.clone().detach().requires_grad_(True)
+        Etp_mu = Etp_mu.clone().detach().requires_grad_(True)
+
+        # self.h = torch.abs(Etp_mu - (Et_mu + dedt(Et_mu)))
+        self.h = Etp_mu - Et_mu
+        self.h.backward()
+
+        J = torch.tensor([[Et_mu.grad, Etp_mu.grad]])
+        x0 = torch.tensor([Et_mu, Etp_mu])
+
+        self.eta = J.T @ self.lmbda_in * (J @ x0 - self.h)
         self.lmbda = (J.T @ self.lmbda_in) @ J
-
-    # def linearise(self):
-    #     # Bunch of computations to linearise this factor (Ortiz (2003) eqns. 2.46 and 2.47)
-    #     Et_mu, _ = canonical_to_moments(self.inbox[self.Et_id].eta, self.inbox[self.Et_id].lmbda)
-    #     Etp_mu, _ = canonical_to_moments(self.inbox[self.Etp_id].eta, self.inbox[self.Etp_id].lmbda)
-
-    #     Et_mu = Et_mu.clone().requires_grad_(True)
-    #     Etp_mu = Etp_mu.clone().requires_grad_(True)
-
-    #     # self.h = torch.abs(Etp_mu - (Et_mu + dedt(Et_mu)))
-    #     self.h = Etp_mu - Et_mu
-    #     self.h.backward()
-
-    #     J = torch.tensor([[Et_mu.grad, Etp_mu.grad]])
-    #     x0 = torch.tensor([[Et_mu, Etp_mu]])
-
-    #     self.eta = J.T @ self.lmbda_in * 0
-    #     self.lmbda = (J.T @ self.lmbda_in) @ J
 
     def get_eta(self):
         return self.out_eta
@@ -153,9 +147,9 @@ class DynamicsFactor:
         return self.out_lmbda
 
     def huber(self):
-        # self.linearise()
+        self.linearise()
 
-        r = self.z - 1.
+        r = self.z - self.h
         M = torch.sqrt(r * self.lmbda_in[0,0] * r)
 
         # Eqn. 3.20 from Ortiz (2003)
@@ -166,7 +160,7 @@ class DynamicsFactor:
         return 1
 
     def _compute_message_going_right(self):
-        # self.linearise()
+        self.linearise()
 
         in_eta, in_lmbda = self.inbox[self.Et_id].eta, self.inbox[self.Et_id].lmbda
         kR = self.huber()
@@ -186,12 +180,12 @@ class DynamicsFactor:
         lambda_ab_lambda_bb_inv = lambda_ab / lambda_bb
 
         eta = eta_a - lambda_ab_lambda_bb_inv * eta_b
-        lmbda = lambda_ba - lambda_ab_lambda_bb_inv * lambda_bb
+        lmbda = lambda_aa - lambda_ab_lambda_bb_inv * lambda_ba
 
         return eta, lmbda
 
     def _compute_message_going_left(self):
-        # self.linearise()
+        self.linearise()
 
         in_eta, in_lmbda = self.inbox[self.Etp_id].eta, self.inbox[self.Etp_id].lmbda
         kR = self.huber()
@@ -211,13 +205,13 @@ class DynamicsFactor:
         lambda_ab_lambda_bb_inv = lambda_ab / lambda_bb
 
         eta = eta_a - lambda_ab_lambda_bb_inv * eta_b
-        lmbda = lambda_ba - lambda_ab_lambda_bb_inv * lambda_bb
+        lmbda = lambda_aa - lambda_ab_lambda_bb_inv * lambda_ba
 
         return eta, lmbda
 
     def compute_messages(self):
         var_nodes[self.Et_id].inbox[self.f_id]  = Gaussian(*self._compute_message_going_left())
-        var_nodes[self.Etp_id].inbox[self.f_id] = Gaussian(*self._compute_message_going_right())
+        # var_nodes[self.Etp_id].inbox[self.f_id] = Gaussian(*self._compute_message_going_right())
 
         self.inbox = {}
 
@@ -234,8 +228,8 @@ def update_dynamics_factor(key):
 
 if __name__ == "__main__":
 
-    sigma_obs = 0.5
-    sigma_dynamics = 0.2
+    sigma_obs = 1.
+    sigma_dynamics = 0.3
 
     signal = np.load('E_synthetic_k5_Pdot2_noisy.npy')[:100].astype(np.float32)
     # signal = [1., 2., 3.]
