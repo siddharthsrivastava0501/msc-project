@@ -10,7 +10,8 @@ torch.manual_seed(42)
 var_nodes, factor_nodes = {}, {}
 
 def dedt(E, P = 0.2, k = 5., tau_E = 1.):
-    return (-E + sig(k*E + k*P)) / tau_E
+    de = (-E + sig(k*E + k*P)) / tau_E
+    return de
 
 class Variable:
     def __init__(self, var_id, mu, sigma, left_id, right_id, prior_id) -> None:
@@ -131,7 +132,7 @@ class ObservationFactor:
 
 
 class DynamicsFactor:
-    def __init__(self, Et_id, Etp_id, lmbda_in, f_id) -> None:
+    def __init__(self, Et_id, Etp_id, lmbda_in, f_id, k = 5.) -> None:
         self.Et_id = Et_id
         self.Etp_id = Etp_id
         self.lmbda_in = lmbda_in
@@ -141,6 +142,7 @@ class DynamicsFactor:
         self.inbox = {}
         self.N_sigma = torch.sqrt(lmbda_in[0,0])
         self.z = 0
+        self.k = k
 
     def linearise(self):
         # Bunch of computations to linearise this factor (Ortiz (2003) eqns. 2.46 and 2.47)
@@ -150,7 +152,7 @@ class DynamicsFactor:
         Et_mu = Et_mu.clone().detach().requires_grad_(True)
         Etp_mu = Etp_mu.clone().detach().requires_grad_(True)
 
-        self.h = torch.abs(Etp_mu - (Et_mu + dt * dedt(Et_mu)))
+        self.h = torch.abs(Etp_mu - (Et_mu + dt * dedt(Et_mu, k = self.k)))
         # self.h = Etp_mu - Et_mu
         self.h.backward()
 
@@ -249,51 +251,53 @@ def update_dynamics_factor(key):
 
 if __name__ == "__main__":
 
-    sigma_obs = 1.
-    sigma_dynamics = 0.3
+    sigma_obs = 1e-2
+    sigma_dynamics = 1e-3
 
-    signal = np.load('E_synthetic_k5_Pdot2_noisy.npy')[:100].astype(np.float32)
+    signal = np.load('E_synthetic_kdot5_Pdot2.npy')[50:250].astype(np.float32)
     # signal = [1., 2., 3.]
     t = torch.arange(0, len(signal), 1)
     dt = 0.01
-    sigma_obs_values = [1e0, 5e-1, 1e-1, 1e-2, 1e-3]
-    sigma_dynamics_values = [1e0, 5e-1, 1e-1, 1e-2, 1e-3]
+    sigma_obs_values = [1e2, 1e1, 1e0, 1e-1, 1e-2]
+    sigma_dynamics_values = [1e2, 1e1, 1e0, 1e-1, 1e-2]
 
     fig, axs = plt.subplots(5, 5, figsize=(30, 30))
 
     for a, sigma_obs in enumerate(sigma_obs_values):
         for b, sigma_dynamics in enumerate(sigma_dynamics_values):
-            ax = axs[a, b]
+            ax = axs[a,b]
+            for k in [0., .2, .5, 1., 5.]:
+                var_nodes = {}
+                factor_nodes = {}
 
-            for iters in [5, 10, 20, 50]:
-                for i in range(len(t)):
-                    var_nodes[i] = Variable(i, torch.tensor([[0.]]), torch.tensor([[0.]]), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i)
-                    factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]))
+                for iters in [20]:
+                    for i in range(len(t)):
+                        var_nodes[i] = Variable(i, torch.tensor([[0.]]), torch.tensor([[0.]]), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i)
+                        factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]))
 
-                for i in range(len(t)):
-                    if i + 1 < len(t):
-                        factor_nodes[(i, i+1)] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), (i, i+1))
+                    for i in range(len(t)):
+                        if i + 1 < len(t):
+                            factor_nodes[(i, i+1)] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), (i, i+1), k)
 
-                for i in range(iters):
-                    # print(f'---- Iteration {i} ----')
-                    for key in factor_nodes:
-                        update_observational_factor(key)
+                    for i in range(iters):
+                        # print(f'---- Iteration {i} ----')
+                        for key in factor_nodes:
+                            update_observational_factor(key)
 
-                    for key in var_nodes:
-                        update_variable_belief(key)
+                        for key in var_nodes:
+                            update_variable_belief(key)
 
-                    for key in factor_nodes:
-                        update_dynamics_factor(key)
+                        for key in factor_nodes:
+                            update_dynamics_factor(key)
 
-                recons_signal = torch.tensor([var_nodes[key].get_mu() for key in var_nodes])
-                ax.plot(recons_signal, label=f'Iterations = {iters}')
+                    recons_signal = torch.tensor([var_nodes[key].get_mu() for key in var_nodes])
+                    ax.plot(recons_signal, label = f'k = {k}')
 
-            ax.set_title(rf'$\sigma_o = {sigma_obs}, \sigma_d = {sigma_dynamics}$')
+                ax.set_title(rf'$\sigma_o = {sigma_obs}, \sigma_d = {sigma_dynamics}$')
 
-            ax.plot(signal, label='Input Signal')
-
+            ax.plot(signal, label = 'Noisy Signal')
             ax.legend()
 
     # plt.tight_layout()
-    # plt.show()
-    plt.savefig('impact_on_iters_dynamics_k5.pdf', dpi=600, bbox_inches='tight')
+    # plt.savefig('temp4.pdf', dpi=600, bbox_inches='tight')
+    plt.show()
