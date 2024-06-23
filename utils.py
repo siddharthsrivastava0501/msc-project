@@ -25,3 +25,11 @@ def canonical_to_moments(eta : Tensor, lmbda : Tensor) -> tuple[Tensor, Tensor]:
     mu = sig @ eta
 
     return (mu, sig)
+
+def select_not_i(tensor, i) -> Tensor:
+    '''
+    Selects not the ith row and ith column from a tensor
+    '''
+    mask = torch.ones(tensor.shape[0], dtype=torch.bool)
+    mask[i] = False
+    return tensor[mask][:, mask]
