@@ -3,7 +3,7 @@ import torch
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 from torch._prims_common import Tensor
-from utils import Gaussian, canonical_to_moments, sig
+from utils import Gaussian, canonical_to_moments, sig, simulate_signal
 import numpy as np
 
 np.random.seed(42)
@@ -188,28 +188,28 @@ class DynamicsFactor:
         self._prev_messages = defaultdict(lambda: Gaussian(0., 0.))
         self.inbox = defaultdict(lambda: Gaussian(0., 0.))
 
-        # self._vars = [Et_id, Etp_id, k_id]
-        self._vars = [Et_id, Etp_id]
+        self._vars = [Et_id, Etp_id, k_id]
+        # self._vars = [Et_id, Etp_id]
 
 
     def linearise(self):
         # Bunch of computations to linearise this factor (Ortiz (2023) eqns. 2.46 and 2.47)
         Et_mu  = var_nodes[self.Et_id].get_mu()
         Etp_mu = var_nodes[self.Etp_id].get_mu()
-        # k_mu   = var_nodes[self.k_id].get_mu()
+        k_mu   = var_nodes[self.k_id].get_mu()
 
         Et_mu  = Et_mu.clone().detach().requires_grad_(True)
         Etp_mu = Etp_mu.clone().detach().requires_grad_(True)
-        # k_mu   = k_mu.clone().detach().requires_grad_(True)
+        k_mu   = k_mu.clone().detach().requires_grad_(True)
 
-        self.h = torch.abs(Etp_mu - (Et_mu + dt * dedt(Et_mu, k = self.k_id)))
+        self.h = torch.abs(Etp_mu - (Et_mu + dt * dedt(Et_mu, k = k_mu)))
         # self.h = Etp_mu - Et_mu
         self.h.backward()
 
-        # J = torch.tensor([[Et_mu.grad, Etp_mu.grad, k_mu.grad]])
-        J = torch.tensor([[Et_mu.grad, Etp_mu.grad]])
-        # x0 = torch.tensor([Et_mu.item(), Etp_mu.item(), k_mu.item()])
-        x0 = torch.tensor([Et_mu.item(), Etp_mu.item()])
+        J = torch.tensor([[Et_mu.grad, Etp_mu.grad, k_mu.grad]])
+        # J = torch.tensor([[Et_mu.grad, Etp_mu.grad]])
+        x0 = torch.tensor([Et_mu.item(), Etp_mu.item(), k_mu.item()])
+        # x0 = torch.tensor([Et_mu.item(), Etp_mu.item()])
 
         self.eta = J.T @ self.lmbda_in * (J @ x0 - self.h)
         self.lmbda = (J.T @ self.lmbda_in) @ J
@@ -305,7 +305,10 @@ if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
 
-    signal = np.load('E_synthetic_kdot4_Pdot2.npy')[500:800].astype(np.float32)
+    GT = 0.8
+    signal = simulate_signal(15, 0.01, GT, 0.2, 1.)[250:]
+    signal += torch.normal(0, 0.1, size=signal.shape)
+
     # signal = [1., 2., 3., 4.]
     t = torch.arange(0, len(signal), 1)
     dt = 0.01
@@ -315,103 +318,102 @@ if __name__ == "__main__":
     ax = axs
 
     k_id = len(t)
-    k_param = Parameter(k_id, torch.tensor([[.5]]), torch.tensor([[0.2]]), [])
+    k_param = Parameter(k_id, torch.tensor([[.5]]), torch.tensor([[2.]]), [])
 
-    for k in [0, .2, .5, 1., 5.]:
-        var_nodes = {}
-        factor_nodes = {}
+    var_nodes = {}
+    factor_nodes = {}
 
-        # == CONSTRUCT FG === #
+    # == CONSTRUCT FG === #
+    for i in range(len(t)):
+        var_nodes[i] = Variable(i, torch.tensor([[0.]]), torch.tensor([[0.1]]), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i)
+        factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]))
+
+    for i in range(len(t)):
+        if i + 1 < len(t):
+            dyn_id = (i, i+1)
+            factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), dyn_id, k_id)
+            k_param.connected_factors.append(dyn_id)
+
+    var_nodes[k_id] = k_param
+
+    # === RUN GBP (Simultaneous Schedule)=== #
+    # for i in range(iters):
+    #     # print(f'---- Iteration {i} ----')
+    #     if i == 0: var_nodes[k_id].send_initial_message()
+
+    #     for key in factor_nodes:
+    #         update_observational_factor(key)
+
+    #     for key in var_nodes:
+    #         update_variable_belief(key)
+
+    #     for key in factor_nodes:
+    #         update_dynamics_factor(key)
+
+    #     var_nodes[k_id].compute_messages()
+
+
+    # == RUN GBP (Sweep schedule) === #
+    for i in range(iters):
+        if i == 0: var_nodes[k_id].send_initial_message()
+
+        for key in factor_nodes:
+            update_observational_factor(key)
+
+        # -- RIGHT PASS -- #
         for i in range(len(t)):
-            var_nodes[i] = Variable(i, torch.tensor([[0.2]]), torch.tensor([[0.2]]), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i)
-            factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]))
+            # -- Update variable belief and send message right -- #
+            curr = var_nodes[i]
 
-        for i in range(len(t)):
-            if i + 1 < len(t):
-                dyn_id = (i, i+1)
-                factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), dyn_id, k)
-                k_param.connected_factors.append(dyn_id)
+            curr.belief_update()
 
-        var_nodes[k_id] = k_param
+            if curr.right_id == -1: continue
 
-        # === RUN GBP (Simultaneous Schedule)=== #
-        # for i in range(iters):
-        #     # print(f'---- Iteration {i} ----')
-        #     if i == 0: var_nodes[k_id].send_initial_message()
+            in_eta, in_lmbda = curr.inbox[curr.right_id].eta, curr.inbox[curr.right_id].lmbda
+            out_eta, out_lmbda = curr.get_eta() - in_eta, curr.get_lmbda() - in_lmbda
 
-        #     for key in factor_nodes:
-        #         update_observational_factor(key)
+            factor_nodes[curr.right_id].inbox[i] = Gaussian(out_eta, out_lmbda)
 
-        #     for key in var_nodes:
-        #         update_variable_belief(key)
+            # -- Update dynamics factor and send message right -- #
+            fac = factor_nodes[curr.right_id]
 
-        #     for key in factor_nodes:
-        #         update_dynamics_factor(key)
+            var_nodes[fac.Etp_id].inbox[fac.f_id] = fac._compute_message_to_i(1)
+            var_nodes[fac.k_id].inbox[fac.f_id] = fac._compute_message_to_i(2)
 
-        #     var_nodes[k_id].compute_messages()
+        var_nodes[k_id].compute_messages()
 
+        # -- LEFT PASS -- #
+        for i in range(len(t)-1, -1, -1):
+            # -- Update variable belief and send message left -- #
+            curr = var_nodes[i]
 
-        # == RUN GBP (Sweep schedule) === #
-        for i in range(iters):
-            if i == 0: var_nodes[k_id].send_initial_message()
+            curr.belief_update()
 
-            for key in factor_nodes:
-                update_observational_factor(key)
+            if curr.left_id == -1: continue
 
-            # -- RIGHT PASS -- #
-            for i in range(len(t)):
-                # -- Update variable belief and send message right -- #
-                curr = var_nodes[i]
+            in_eta, in_lmbda = curr.inbox[curr.left_id].eta, curr.inbox[curr.left_id].lmbda
+            out_eta, out_lmbda = curr.get_eta() - in_eta, curr.get_lmbda() - in_lmbda
 
-                curr.belief_update()
+            factor_nodes[curr.left_id].inbox[i] = Gaussian(out_eta, out_lmbda)
 
-                if curr.right_id == -1: continue
+            # -- Update dynamics factor and send message left -- #
+            fac = factor_nodes[curr.left_id]
 
-                in_eta, in_lmbda = curr.inbox[curr.right_id].eta, curr.inbox[curr.right_id].lmbda
-                out_eta, out_lmbda = curr.get_eta() - in_eta, curr.get_lmbda() - in_lmbda
+            var_nodes[fac.Et_id].inbox[fac.f_id] = fac._compute_message_to_i(0)
+            var_nodes[fac.k_id].inbox[fac.f_id] = fac._compute_message_to_i(2)
 
-                factor_nodes[curr.right_id].inbox[i] = Gaussian(out_eta, out_lmbda)
-
-                # -- Update dynamics factor and send message right -- #
-                fac = factor_nodes[curr.right_id]
-
-                var_nodes[fac.Etp_id].inbox[fac.f_id] = fac._compute_message_to_i(1)
-                # var_nodes[fac.k_id].inbox[fac.f_id] = fac._compute_message_to_i(2)
-
-            # var_nodes[k_id].compute_messages()
-
-            # -- LEFT PASS -- #
-            for i in range(len(t)-1, -1, -1):
-                # -- Update variable belief and send message left -- #
-                curr = var_nodes[i]
-
-                curr.belief_update()
-
-                if curr.left_id == -1: continue
-
-                in_eta, in_lmbda = curr.inbox[curr.left_id].eta, curr.inbox[curr.left_id].lmbda
-                out_eta, out_lmbda = curr.get_eta() - in_eta, curr.get_lmbda() - in_lmbda
-
-                factor_nodes[curr.left_id].inbox[i] = Gaussian(out_eta, out_lmbda)
-
-                # -- Update dynamics factor and send message left -- #
-                fac = factor_nodes[curr.left_id]
-
-                var_nodes[fac.Et_id].inbox[fac.f_id] = fac._compute_message_to_i(0)
-                # var_nodes[fac.k_id].inbox[fac.f_id] = fac._compute_message_to_i(2)
-
-            # var_nodes[k_id].compute_messages()
+        var_nodes[k_id].compute_messages()
 
 
-        # == Extract and plot === #
-        recons_signal = torch.tensor([var_nodes[key].get_mu() for key in var_nodes if key != k_id])
-        print(recons_signal)
-        print(var_nodes[k_id].get_mu().item(), var_nodes[k_id].get_sigma().item())
-        ax.plot(recons_signal, label = rf'k = {k}')
+    # == Extract and plot === #
+    recons_signal = torch.tensor([var_nodes[key].get_mu() for key in var_nodes if key != k_id])
+    print(recons_signal)
+    print(var_nodes[k_id].get_mu().item(), var_nodes[k_id].get_sigma().item())
+    ax.plot(recons_signal, label = rf'k = {var_nodes[k_id].get_mu().item()}')
 
     ax.set_title(rf'$\sigma_o = {sigma_obs}, \sigma_d = {sigma_dynamics}$')
 
-    ax.plot(signal, label = 'Noisy Signal')
+    ax.plot(signal, label = f'Noisy Signal, k = {GT}')
     ax.legend()
 
     # plt.tight_layout()

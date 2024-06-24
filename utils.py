@@ -26,6 +26,7 @@ def canonical_to_moments(eta : Tensor, lmbda : Tensor) -> tuple[Tensor, Tensor]:
 
     return (mu, sig)
 
+
 def select_not_i(tensor, i) -> Tensor:
     '''
     Selects not the ith row and ith column from a tensor
@@ -33,3 +34,18 @@ def select_not_i(tensor, i) -> Tensor:
     mask = torch.ones(tensor.shape[0], dtype=torch.bool)
     mask[i] = False
     return tensor[mask][:, mask]
+
+
+def simulate_signal(T, dt, k, P, tau_E):
+    t = torch.arange(0, T + dt, dt)
+    E = torch.zeros(len(t))
+
+    def dedt(t, E, I, P):
+        # de = (-E + (1 - r*E)*sig(w_ee*E - w_ei*I + P)) / tau_E
+        de = (-E + sig(k*E + k*P)) / tau_E
+        return de
+
+    for i in range(len(t) - 1):
+        E[i + 1] = E[i] + dt * dedt(0, E[i], 0, P)
+
+    return E
