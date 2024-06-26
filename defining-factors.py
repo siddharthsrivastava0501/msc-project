@@ -310,14 +310,14 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(1, 1, figsize=(25, 5))
 
-    for a, GT in enumerate([1.]):
-        signal = simulate_signal(15, 0.01, GT, 2., 1.)[250:]
-        signal += torch.normal(0, GT/3, size=signal.shape)
+    for a, GT in enumerate([2.]):
+        signal = simulate_signal(15, 0.01, GT, 0.2, 1.)[250:]
+        # signal += torch.normal(0, 0.2, size=signal.shape)
 
         # signal = [1., 2., 3., 4.]
         t = torch.arange(0, len(signal), 1)
         dt = 0.01
-        iters = 50
+        iters = 60
 
         ax = axs
 
@@ -363,7 +363,7 @@ if __name__ == "__main__":
 
         # == RUN GBP (Sweep schedule) === #
         for i in range(iters):
-            print(f'-- Iteration {i} --')
+            print(f'-- Iteration {i}, currently at k = {var_nodes[k_id].get_mu().item():4f} sigma={var_nodes[k_id].get_sigma().item():4f} --')
             if i == 0:
                 var_nodes[k_id].send_initial_message()
                 var_nodes[p_id].send_initial_message()
@@ -432,8 +432,8 @@ if __name__ == "__main__":
 
         print(var_nodes[k_id].get_mu().item(), var_nodes[p_id].get_mu().item(), var_nodes[k_id].get_sigma().item(), var_nodes[p_id].get_sigma().item())
 
-        signal = simulate_signal(15, 0.01, GT, 2., 1.)[250:]
-        ax.plot(signal, label=f'True Signal')
+        # signal = simulate_signal(15, 0.01, GT, 2., 1.)[250:]
+        # ax.plot(signal, label=f'True Signal')
 
         ax.set_title(rf'$\sigma_o = {sigma_obs}, \sigma_d = {sigma_dynamics}$')
 
