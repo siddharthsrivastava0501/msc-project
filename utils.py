@@ -49,3 +49,6 @@ def simulate_signal(T, dt, k, P, tau_E):
         E[i + 1] = E[i] + dt * dedt(0, E[i], 0, P)
 
     return E
+
+def softplus(x, beta = 1.0):
+    return 1/beta * (torch.log(1 + torch.exp(beta * x)))
