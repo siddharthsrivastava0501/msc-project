@@ -316,12 +316,12 @@ if __name__ == "__main__":
 
     fig, axs = plt.subplots(1, 1, figsize=(10, 10))
 
-    signal = simulate_signal(T, dt, GT_k)[250:]
-    noise  = torch.normal(0, 0, size=signal.shape)
-    signal += noise
+    # signal = simulate_signal(T, dt, GT_k)[250:]
+    # noise  = torch.normal(0, 0, size=signal.shape)
+    # signal += noise
+    signal = [1., 2., 3., 4.]
     t = torch.arange(0, len(signal), 1)
 
-    # signal = [1., 2., 3., 4.]
 
     ax = axs
 
@@ -411,7 +411,7 @@ if __name__ == "__main__":
     ax.plot(recons_signal, label = rf'Reconstructed Mus')
 
     rec = simulate_signal(T, dt, *[p.get_mu().item() for _,p in params.items()])[250:]
-    rec += noise
+    # rec += noise
     ax.plot(rec, label=f'Reconstructed Simuluation')
 
     for _,p in params.items():
