@@ -15,7 +15,7 @@ if __name__ == "__main__":
     iters = 20
 
     signal = simulate_signal(T, dt, GT_k)
-    noise = torch.normal(0, 0, signal.shape)
+    noise = torch.normal(0, sigma_obs, signal.shape)
     signal += noise
     # signal = [1., 2., 3., 4.]
     t = torch.arange(0, len(signal), 1)
@@ -25,7 +25,7 @@ if __name__ == "__main__":
     factor_graph = Graph()
 
     param_dict = {
-        'k': Parameter(len(t), Gaussian(torch.tensor([[1.0]]), torch.tensor([[2.]])), factor_graph, [])
+        'k': Parameter(len(t), Gaussian(torch.tensor([[1.2]]), torch.tensor([[0.5]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
@@ -51,34 +51,40 @@ if __name__ == "__main__":
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        print(f'Iteration {iter}, k = {param_dict["k"].mean, param_dict["k"].cov}')
+        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()}')
         if iter == 0:
             factor_graph.send_initial_parameter_messages()
             factor_graph.update_all_observational_factors()
 
         # -- RIGHT PASS --
-        for i in range(len(t)-1):
+        for i in range(len(t)):
             curr = factor_graph.var_nodes[i]
-
+            factor_graph.update_variable_belief(i)
             curr.compute_and_send_messages()
 
-            fac = factor_graph.factor_nodes[curr.right_id]
+            if curr.right_id == -1: continue
 
-            fac.compute_messages_except_key()
+            fac = factor_graph.factor_nodes[curr.right_id]
+            factor_graph.update_factor_belief(curr.right_id)
+            fac.compute_and_send_messages()
 
         factor_graph.update_params()
 
         # -- LEFT PASS --
-        for i in range(len(t)-1, 0, -1):
+        for i in range(len(t)-1, -1, -1):
             curr = factor_graph.var_nodes[i]
-
+            factor_graph.update_variable_belief(i)
             curr.compute_and_send_messages()
 
-            fac = factor_graph.factor_nodes[curr.left_id]
+            if curr.left_id == -1: continue
 
-            fac.compute_messages_except_key()
+            fac = factor_graph.factor_nodes[curr.left_id]
+            factor_graph.update_factor_belief(curr.left_id)
+            fac.compute_and_send_messages()
 
         factor_graph.update_params()
+
+        factor_graph.update_all_beliefs()
 
 
     # Plotting results

@@ -38,7 +38,7 @@ class Variable:
     # This is so the linter doesn't complain
     def send_initial_messages(self) -> None: pass
 
-    def belief_update(self) -> None:
+    def update_belief(self) -> None:
         '''
         Consume the messages in the inbox to update belief
         '''
@@ -48,18 +48,17 @@ class Variable:
             curr *= message
 
         # if not torch.is_nonzero(curr.lmbda): print('We are having a serious problem in the variable')
-        
+
         self.belief = curr.clone()
 
     def compute_and_send_messages(self) -> None:
         '''
         Equation 2.50, 2.51 in Ortiz (2023)
         '''
-        self.belief_update()
         for fid in self.connected_factors:
             if fid == -1: continue
 
-            # Message can be efficiently computed by calculating belief and then 
+            # Message can be efficiently computed by calculating belief and then
             # dividing with the incoming message?
             msg = self.belief / self.inbox[fid]
 
@@ -93,7 +92,7 @@ class Parameter:
     def lmbda(self) -> Tensor:
         return self.belief.lmbda
 
-    def belief_update(self) -> None:
+    def update_belief(self) -> None:
         '''
         Consume the messages in the inbox to update belief
         '''
@@ -111,7 +110,7 @@ class Parameter:
             self.graph.send_msg_to_factor(self.id, fid, self.belief.clone())
 
     def compute_and_send_messages(self) -> None:
-        self.belief_update()
+        self.update_belief()
 
         for fid in self.connected_factors:
             if fid == -1: continue

@@ -1,6 +1,6 @@
 from collections import defaultdict
 import torch
-from torch._prims_common import Tensor
+from torch import Tensor
 from .graph import Graph
 from .gaussian import Gaussian
 from .simulation_config import sig, dEdt
@@ -18,13 +18,14 @@ class ObservationFactor:
         self.belief = Gaussian.from_canonical((J.T @ lmbda_in) * z, (J.T @ lmbda_in) @ J)
 
         # Huber threshold
-        self.N_sigma = torch.sqrt(self.lmbda_in[0,0])
+        self.N_sigma = torch.sqrt(self.lmbda_in)
 
         self.inbox = {}
 
         self.graph = graph
 
-    
+    def update_belief(self) -> None: pass
+
     def compute_huber(self) -> float:
         # Equation 3.16 in Ortiz (2023)
         r = self.z - self.graph.get_var_belief(self.var_id).mean
@@ -39,8 +40,9 @@ class ObservationFactor:
 
     def compute_and_send_messages(self) -> None:
         kR = self.compute_huber()
-
-        self.graph.send_msg_to_variable(self.factor_id, self.var_id, self.belief * kR)
+        # kR = 1.
+        message = self.belief * kR
+        self.graph.send_msg_to_variable(self.factor_id, self.var_id, message)
 
 class DynamicsFactor:
     '''
@@ -66,7 +68,7 @@ class DynamicsFactor:
         self._connected_vars = [Et_id, Etp_id] + list(self.parameters)
 
 
-    def linearise(self) -> None:
+    def linearise(self) -> Gaussian:
         '''
         Returns the linearised Gaussian factor based on equations 2.46 and 2.47 in Ortiz (2023)
         '''
@@ -80,13 +82,13 @@ class DynamicsFactor:
         self.h = torch.abs(Etp_mu - (Et_mu + 0.01 * dEdt(Et_mu, *connected_variables[2:])))
         self.h.backward()
 
-        J = torch.tensor([[v.grad for v in connected_variables]])
-        x0 = torch.tensor([v.item() for v in connected_variables])
+        J = torch.tensor([[v.grad.unsqueeze(0) for v in connected_variables if v.grad is not None]])
+        x0 = torch.cat([v for v in connected_variables])
 
         eta = J.T @ self.lmbda_in @ (J @ x0 - self.h)
         lmbda = (J.T @ self.lmbda_in) @ J
 
-        self.belief = Gaussian.from_canonical(eta, lmbda)
+        return Gaussian.from_canonical(eta, lmbda)
 
     def compute_huber(self) -> float:
         # Equation 3.16 in Ortiz (2023)
@@ -105,35 +107,36 @@ class DynamicsFactor:
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
         '''
-        self.linearise()
+        linearised_factor = self.linearise()
 
-        factor = self.belief.clone()
+        product = Gaussian.zeros_like(linearised_factor)
+        for j,id in enumerate(self._connected_vars):
+            if j != i:
+                in_msg = self.inbox.get(id, Gaussian.from_canonical(torch.tensor([0.]), torch.tensor([0.])))
 
-        for j,msg in self.inbox.items():
-            if j == i: continue
+                product.eta[j] += in_msg.eta.item()
+                product.lmbda[j, j] += in_msg.lmbda.item()
 
-            factor *= msg
+        factor_product = linearised_factor * product
+        marginal = factor_product.marginalise(i)
 
         kR = self.compute_huber()
-        factor *= kR
+        marginal *= kR
 
-        factor = factor.marginalise(i)
-
-        damped_factor = (factor * beta) * (self._prev_messages.get(i, Gaussian.zeros_like(factor)) * (1 - beta))
+        prev_msg = self._prev_messages.get(i, Gaussian.zeros_like(marginal))
+        damped_factor = (marginal * beta) * (prev_msg * (1 - beta))
 
         # Store previous message
-        self._prev_messages[i] = factor
+        self._prev_messages[i] = damped_factor
 
         return damped_factor
 
-    def compute_and_send_messages(self) -> None: pass
+    def compute_and_send_messages(self) -> None:
+        for i, var_id in enumerate(self._connected_vars):
+            msg = self._compute_message_to_i(i)
+            self.graph.send_msg_to_variable(self.factor_id, var_id, msg)
 
-    def compute_messages_except_key(self, key = None):
-        '''
-        Sends messages to all adjacent variables except that of `key`. For example, if we wish to send messages right,
-        during a right sweep, we would send messages to all vars. except Et.
-        '''
-        for i,j in enumerate(self._connected_vars):
-            if j == key: continue
-
-            self.graph.send_msg_to_variable(self.factor_id, j, self._compute_message_to_i(i))
+    def update_belief(self) -> None:
+        self.belief = self.linearise()
+        for msg in self.inbox.values():
+            self.belief *= msg

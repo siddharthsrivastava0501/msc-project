@@ -1,5 +1,5 @@
 import torch
-from torch._prims_common import Tensor
+from torch import Tensor
 from typing import Tuple, Union
 import numpy as np
 

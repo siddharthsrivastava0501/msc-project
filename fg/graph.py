@@ -16,10 +16,6 @@ class Graph:
     def send_msg_to_variable(self, sender, recipient, msg : Gaussian) -> None:
         self.var_nodes[recipient].inbox[sender] = msg
 
-    def update_variable_belief(self, key, param_ids):
-        if key not in param_ids:
-            self.var_nodes[key].compute_and_send_messages()
-
     def update_dynamics_factor(self, key):
         if isinstance(key, tuple):
             self.factor_nodes[key].compute_and_send_messages()
@@ -36,3 +32,15 @@ class Graph:
         for key in self.factor_nodes:
             if not isinstance(key, tuple):
                 self.factor_nodes[key].compute_and_send_messages()
+
+    def update_variable_belief(self, key):
+        self.var_nodes[key].update_belief()
+
+    def update_factor_belief(self, key):
+        self.factor_nodes[key].update_belief()
+
+    def update_all_beliefs(self):
+        for key in self.var_nodes:
+            self.update_variable_belief(key)
+        for key in self.factor_nodes:
+            self.update_factor_belief(key)
