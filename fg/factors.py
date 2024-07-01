@@ -20,7 +20,7 @@ class ObservationFactor:
         # Huber threshold
         self.N_sigma = torch.sqrt(self.lmbda_in[0,0])
 
-        self.inbox = defaultdict(lambda: Gaussian.zeros_like(self.belief))
+        self.inbox = {}
 
         self.graph = graph
 
@@ -119,13 +119,10 @@ class DynamicsFactor:
 
         factor = factor.marginalise(i)
 
-        damped_factor = (factor * beta) * (1 - beta) * (self._prev_messages[i])
+        damped_factor = (factor * beta) * (self._prev_messages.get(i, Gaussian.zeros_like(factor)) * (1 - beta))
 
         # Store previous message
         self._prev_messages[i] = factor
-
-        print('marginalisation result', factor)
-        print('sending message', damped_factor)
 
         return damped_factor
 

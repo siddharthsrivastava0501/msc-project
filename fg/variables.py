@@ -49,7 +49,6 @@ class Variable:
 
         # if not torch.is_nonzero(curr.lmbda): print('We are having a serious problem in the variable')
         
-        print(f'updated belief {curr}')
         self.belief = curr.clone()
 
     def compute_and_send_messages(self) -> None:
@@ -63,8 +62,6 @@ class Variable:
             # Message can be efficiently computed by calculating belief and then 
             # dividing with the incoming message?
             msg = self.belief / self.inbox[fid]
-
-            print(f'sending message to {fid} {msg}')
 
             self.graph.send_msg_to_factor(self.id, fid, msg)
 

@@ -15,6 +15,8 @@ if __name__ == "__main__":
     iters = 20
 
     signal = simulate_signal(T, dt, GT_k)
+    noise = torch.normal(0, 0, signal.shape)
+    signal += noise
     # signal = [1., 2., 3., 4.]
     t = torch.arange(0, len(signal), 1)
 
@@ -23,7 +25,7 @@ if __name__ == "__main__":
     factor_graph = Graph()
 
     param_dict = {
-        # 'k': Parameter(len(t), Gaussian(torch.tensor([[1.0]]), torch.tensor([[2.]])), factor_graph, [])
+        'k': Parameter(len(t), Gaussian(torch.tensor([[1.0]]), torch.tensor([[2.]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
@@ -49,11 +51,10 @@ if __name__ == "__main__":
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        print(f'Iteration {iter}')
+        print(f'Iteration {iter}, k = {param_dict["k"].mean, param_dict["k"].cov}')
         if iter == 0:
             factor_graph.send_initial_parameter_messages()
-
-        factor_graph.update_all_observational_factors()
+            factor_graph.update_all_observational_factors()
 
         # -- RIGHT PASS --
         for i in range(len(t)-1):
@@ -84,8 +85,8 @@ if __name__ == "__main__":
     ax.plot(signal, label='Original Signal')
     recons_signal = torch.tensor([v.mean for k, v in factor_graph.var_nodes.items() if k not in factor_graph.param_ids])
 
-    print(signal.shape, recons_signal.shape)
-
     ax.plot(recons_signal, label='GBP Result')
+
+    ax.plot(simulate_signal(T, dt, param_dict["k"].mean.item()) + noise, label=f'Reconstructed Signal, k = {param_dict["k"].mean.item()}')
     plt.legend()
     plt.show()

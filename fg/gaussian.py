@@ -96,7 +96,7 @@ class Gaussian:
         prec_ba = prec[np.ix_(axis_b, axis_a)]
         prec_bb = prec[np.ix_(axis_b, axis_b)]
 
-        prec_bb_inv = np.linalg.inv(prec_bb)
+        prec_bb_inv = torch.linalg.inv(prec_bb)
         info_ = info_a - prec_ab @ prec_bb_inv @ info_b
         prec_ = prec_aa - prec_ab @ prec_bb_inv @ prec_ba
 
