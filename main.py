@@ -12,10 +12,11 @@ if __name__ == "__main__":
     sigma_prior = 1e1
     sigma_dynamics = 1e-3
     GT_k = 1.2
-    T, dt = 15, 0.01
-    iters = 20
+    GT_p = 0.8
+    T, dt = 2, 0.01
+    iters = 25
 
-    signal = simulate_signal(T, dt, GT_k)
+    signal = simulate_signal(T, dt, GT_k, GT_p)
     noise = torch.normal(0, sigma_obs, signal.shape)
     signal += noise
     # signal = [1., 2., 3., 4.]
@@ -26,7 +27,8 @@ if __name__ == "__main__":
     factor_graph = Graph()
 
     param_dict = {
-        'k': Parameter(len(t), Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
+        'k': Parameter(len(t), Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'p': Parameter(len(t)+1, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
     }
 
     # -- Construct FG -- #
@@ -51,13 +53,12 @@ if __name__ == "__main__":
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + len(t)] = ObservationFactor(i + len(t), p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
+        factor_graph.factor_nodes[i + p.id] = ObservationFactor(i + p.id, p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
                                                                   factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        # print('Iter', iter)
-        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()}+-{param_dict["k"].cov.item()}')
+        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()} +- {param_dict["k"].cov.item()}')
         if iter == 0:
             # Initialise messages from observation factors to variables
             # and prior factors to parameters (if learning params)
@@ -105,8 +106,14 @@ if __name__ == "__main__":
     ax.plot(signal, label='Original Signal')
     recons_signal = torch.tensor([v.mean for k, v in factor_graph.var_nodes.items() if k not in factor_graph.param_ids])
 
+    for k, p in param_dict.items():
+        print(k, p)
+
     ax.plot(recons_signal, label='GBP Result')
 
-    ax.plot(simulate_signal(T, dt, param_dict["k"].mean.item()) + noise, label=f'Reconstructed Signal, k = {param_dict["k"].mean.item()}')
+    ax.plot(simulate_signal(T, dt, \
+                            param_dict["k"].mean.item(), \
+                            param_dict["p"].mean.item(), \
+    ) + noise, label=f'Reconstructed Signal, k = {param_dict["k"].mean.item()}')
     plt.legend()
     plt.show()

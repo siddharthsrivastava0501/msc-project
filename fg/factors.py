@@ -6,7 +6,7 @@ from .gaussian import Gaussian
 from .simulation_config import sig, dEdt
 
 class ObservationFactor:
-    def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph) -> None:
+    def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph, huber = False) -> None:
         self.factor_id = factor_id
         self.var_id = var_id
         self.z = z
@@ -24,6 +24,8 @@ class ObservationFactor:
 
         self.graph = graph
 
+        self.huber = huber
+
     def update_belief(self) -> None: pass
 
     def compute_huber(self) -> float:
@@ -32,11 +34,13 @@ class ObservationFactor:
         M = torch.sqrt(r * self.lmbda_in * r)
 
         # Equation 3.20 in Ortiz (2023)
-        if M > self.N_sigma:
+        if M > self.N_sigma and self.huber:
             kR = (2 * self.N_sigma / M) - (self.N_sigma**2 / M**2)
-            return kR.item()
+            kR = kR.item()
+        else:
+            kR = 1.
 
-        return 1.
+        return kR
 
     def compute_and_send_messages(self) -> None:
         kR = self.compute_huber()
@@ -44,12 +48,15 @@ class ObservationFactor:
         message = self.belief * kR
         self.graph.send_msg_to_variable(self.factor_id, self.var_id, message)
 
+    def __str__(self) -> str:
+        return f'Obs: [{self.factor_id} -- {self.var_id}], z = {self.z}'
+
 class DynamicsFactor:
     '''
     Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
     and is also connected to learnable parameters given by `parameters`.
     '''
-    def __init__(self, Et_id, Etp_id, lmbda_in : Tensor, factor_id, graph : Graph) -> None:
+    def __init__(self, Et_id, Etp_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False) -> None:
         self.Et_id, self.Etp_id = Et_id, Etp_id
         self.lmbda_in = lmbda_in
         self.factor_id = factor_id
@@ -60,12 +67,14 @@ class DynamicsFactor:
         self.N_sigma = torch.sqrt(lmbda_in)
         self.z = 0
 
-        self.inbox = defaultdict(lambda: Gaussian.zeros_like(self.belief))
+        self.inbox = {}
 
         # Used for message damping, see Ortiz (2023) 3.4.6
-        self._prev_messages = defaultdict(lambda: Gaussian.zeros_like(self.belief))
+        self._prev_messages = {}
 
         self._connected_vars = [Et_id, Etp_id] + list(self.parameters)
+
+        self.huber = huber
 
 
     def linearise(self) -> Gaussian:
@@ -96,11 +105,14 @@ class DynamicsFactor:
         M = torch.sqrt(r * self.lmbda_in * r)
 
         # Equation 3.20 in Ortiz (2023)
-        if M > self.N_sigma:
+        if M > self.N_sigma and self.huber:
             kR = (2 * self.N_sigma / M) - (self.N_sigma**2 / M**2)
-            return kR.item()
+            kR = kR.item()
+        else:
+            kR = 1.
 
-        return 1.
+        return kR
+
 
     def _compute_message_to_i(self, i, beta = 0.5) -> Gaussian:
         '''

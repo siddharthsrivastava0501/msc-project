@@ -14,7 +14,7 @@ class Variable:
         self.right_id = right_id
         self.prior_id = prior_id
 
-        self.inbox = defaultdict(lambda: Gaussian.zeros_like(self.belief))
+        self.inbox = {}
         self.connected_factors = [prior_id, left_id, right_id]
 
         self.graph = graph
@@ -60,7 +60,7 @@ class Variable:
 
             # Message can be efficiently computed by calculating belief and then
             # dividing with the incoming message?
-            msg = self.belief / self.inbox[fid]
+            msg = self.belief / self.inbox.get(fid, Gaussian.zeros_like(self.belief))
 
             self.graph.send_msg_to_factor(self.id, fid, msg)
 
@@ -72,7 +72,7 @@ class Parameter:
         self.id = id
         self.belief = belief
 
-        self.inbox = defaultdict(lambda: Gaussian.zeros_like(self.belief))
+        self.inbox = {}
         self.connected_factors = connected_factors
         self.graph = graph
 
@@ -115,7 +115,7 @@ class Parameter:
         for fid in self.connected_factors:
             if fid == -1: continue
 
-            msg = self.belief / self.inbox[fid]
+            msg = self.belief / self.inbox.get(fid, Gaussian.zeros_like(self.belief))
 
             self.graph.send_msg_to_factor(self.id, fid, msg)
 
