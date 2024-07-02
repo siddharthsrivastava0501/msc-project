@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 
 if __name__ == "__main__":
     sigma_obs = 1e-2
+    sigma_prior = 1e1
     sigma_dynamics = 1e-3
     GT_k = 1.2
     T, dt = 15, 0.01
@@ -25,7 +26,7 @@ if __name__ == "__main__":
     factor_graph = Graph()
 
     param_dict = {
-        'k': Parameter(len(t), Gaussian(torch.tensor([[1.2]]), torch.tensor([[0.5]])), factor_graph, [])
+        'k': Parameter(len(t), Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
@@ -48,13 +49,26 @@ if __name__ == "__main__":
             for _,p in param_dict.items():
                 p.connected_factors.append(dyn_id)
 
+    # Zero mean priors on the parameters
+    for i, (_,p) in enumerate(param_dict.items()):
+        factor_graph.factor_nodes[i + len(t)] = ObservationFactor(i + len(t), p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
+                                                                  factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()}')
+        # print('Iter', iter)
+        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()}+-{param_dict["k"].cov.item()}')
         if iter == 0:
-            factor_graph.send_initial_parameter_messages()
+            # Initialise messages from observation factors to variables
+            # and prior factors to parameters (if learning params)
             factor_graph.update_all_observational_factors()
+
+            # Now update messages from variables to factors
+            # This should ensure all var to dynamics factor messages have non-zero precision
+            for i in factor_graph.var_nodes:
+                curr = factor_graph.var_nodes[i]
+                factor_graph.update_variable_belief(i)
+                curr.compute_and_send_messages()
 
         # -- RIGHT PASS --
         for i in range(len(t)):

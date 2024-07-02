@@ -102,7 +102,7 @@ class DynamicsFactor:
 
         return 1.
 
-    def _compute_message_to_i(self, i, beta = 0.8) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.5) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
