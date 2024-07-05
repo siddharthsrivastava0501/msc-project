@@ -1,46 +1,61 @@
 from fg.variables import Variable, Parameter
-from fg.factors import DynamicsFactor, ObservationFactor
-from fg.simulation_config import simulate_signal
+from fg.factors import DynamicsFactor, ObservationFactor, PriorFactor
+from fg.simulation_config import sig, simulate_signal, tanh
 from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
 import matplotlib.pyplot as plt
+import gc
 
 
 if __name__ == "__main__":
     sigma_obs = 1e-2
-    sigma_prior = 1e1
     sigma_dynamics = 1e-3
-    GT_k = 1.2
-    GT_p = 0.8
-    T, dt = 2, 0.01
-    iters = 25
+    sigma_prior = 1e1
+    iters = 50
 
-    signal = simulate_signal(T, dt, GT_k, GT_p)
-    noise = torch.normal(0, sigma_obs, signal.shape)
-    signal += noise
-    # signal = [1., 2., 3., 4.]
-    t = torch.arange(0, len(signal), 1)
+    config = {
+        'T': 10.,
+        'dt': 0.01,
+        'k1': 10.,
+        'k2': 12.,
+        'k3': 9.,
+        'k4': 3.,
+        'P': 0.2,
+        'Q': 0.5,
+    }
+
+    E, I = simulate_signal(config)
+    t = torch.arange(0, len(E), 1)
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
     factor_graph = Graph()
 
+    # Add 0 as id as we populate them later
     param_dict = {
-        'k': Parameter(len(t), Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'p': Parameter(len(t)+1, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'k1': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'k2': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'k3': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
     # Add our variable and observation factors at each time step
     for i in range(len(t)):
-        factor_graph.var_nodes[i] = Variable(i, Gaussian(torch.tensor([[0.]]), torch.tensor([[0.2]])), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i, factor_graph)
-        factor_graph.factor_nodes[i] = ObservationFactor(i, i, signal[i], torch.tensor([[sigma_obs ** -2]]), factor_graph)
+        factor_graph.var_nodes[i] = Variable(i, Gaussian(torch.tensor([[0., 0.]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i, factor_graph)
+        factor_graph.factor_nodes[i] = ObservationFactor(i, i, torch.tensor([[E[i], I[i]]]).T, torch.tensor([[sigma_obs ** -2, 0.], [0., sigma_obs ** -2]]), factor_graph)
 
-    # Add our parmaters as additional variables to our factor graph
+    # Add our parameters as additional variables to our factor graph
+    k = len(t)
     for _,p in param_dict.items():
+        p.id = k
         factor_graph.param_ids.append(p.id)
         factor_graph.var_nodes[p.id] = p
+
+        k += 1
 
     # Connect dynamics factors between timestep i and i+1 and connect each dyn. factor to our parameters
     for i in range(len(t)):
@@ -53,12 +68,16 @@ if __name__ == "__main__":
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = ObservationFactor(i + p.id, p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
                                                                   factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        print(f'Iteration {iter}, currently at {param_dict["k"].mean.item()} +- {param_dict["k"].cov.item()}')
+        print(f'Iteration {iter}')
+        for k, v in param_dict.items():
+            print(k, v)
+        print('------')
+
         if iter == 0:
             # Initialise messages from observation factors to variables
             # and prior factors to parameters (if learning params)
@@ -68,19 +87,19 @@ if __name__ == "__main__":
             # This should ensure all var to dynamics factor messages have non-zero precision
             for i in factor_graph.var_nodes:
                 curr = factor_graph.var_nodes[i]
-                factor_graph.update_variable_belief(i)
+                curr.update_belief()
                 curr.compute_and_send_messages()
+
+            factor_graph.prune()
 
         # -- RIGHT PASS --
         for i in range(len(t)):
             curr = factor_graph.var_nodes[i]
-            factor_graph.update_variable_belief(i)
             curr.compute_and_send_messages()
 
             if curr.right_id == -1: continue
 
             fac = factor_graph.factor_nodes[curr.right_id]
-            factor_graph.update_factor_belief(curr.right_id)
             fac.compute_and_send_messages()
 
         factor_graph.update_params()
@@ -88,32 +107,33 @@ if __name__ == "__main__":
         # -- LEFT PASS --
         for i in range(len(t)-1, -1, -1):
             curr = factor_graph.var_nodes[i]
-            factor_graph.update_variable_belief(i)
             curr.compute_and_send_messages()
 
             if curr.left_id == -1: continue
 
             fac = factor_graph.factor_nodes[curr.left_id]
-            factor_graph.update_factor_belief(curr.left_id)
             fac.compute_and_send_messages()
 
         factor_graph.update_params()
 
         factor_graph.update_all_beliefs()
 
+        gc.collect()
 
-    # Plotting results
-    ax.plot(signal, label='Original Signal')
-    recons_signal = torch.tensor([v.mean for k, v in factor_graph.var_nodes.items() if k not in factor_graph.param_ids])
+    print('actually ran?')
 
-    for k, p in param_dict.items():
-        print(k, p)
+    config['k1'] = param_dict['k1'].mean.item()
+    config['k2'] = param_dict['k2'].mean.item()
+    config['k3'] = param_dict['k3'].mean.item()
+    config['k4'] = param_dict['k4'].mean.item()
+    config['P'] = param_dict['P'].mean.item()
+    config['Q'] = param_dict['Q'].mean.item()
 
-    ax.plot(recons_signal, label='GBP Result')
+    E_rec, I_rec = simulate_signal(config)
 
-    ax.plot(simulate_signal(T, dt, \
-                            param_dict["k"].mean.item(), \
-                            param_dict["p"].mean.item(), \
-    ) + noise, label=f'Reconstructed Signal, k = {param_dict["k"].mean.item()}')
+    plt.plot(E, label='GT E')
+    plt.plot(I, label='GT I')
+    plt.plot(E_rec.detach().numpy(), label='E_rec')
+    plt.plot(I_rec.detach().numpy(), label='I_rec')
     plt.legend()
     plt.show()

@@ -80,14 +80,15 @@ class Gaussian:
         return f'[eta={self._eta}, lambda={self._lmbda}]'
 
     # Marginalise code from https://github.com/NikuKikai/Gaussian-Belief-Propagation-on-Planning/blob/main/src/fg/factor_graph.py
-    def marginalise(self, dim):
+    def marginalise(self, dim : list):
         '''
-        Marginalises out the current Gaussian on all dimensions except `dim`
+        Marginalises out the current Gaussian on all dimensions except those in
+        `dim`.
         '''
         info, prec = self.eta, self.lmbda
 
-        axis_a = [idx for idx in range(info.shape[0]) if idx == dim]
-        axis_b = [idx for idx in range(info.shape[0]) if idx != dim]
+        axis_a = [idx for idx in range(info.shape[0]) if idx in dim]
+        axis_b = [idx for idx in range(info.shape[0]) if idx not in dim]
 
         info_a = info[np.ix_(axis_a, [0])]
         info_b = info[np.ix_(axis_b, [0])]

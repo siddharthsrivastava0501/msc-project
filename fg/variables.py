@@ -1,7 +1,5 @@
 import torch
-from collections import defaultdict
-
-from torch.linalg import Tensor
+from torch import Tensor
 from .gaussian import Gaussian
 from .graph import Graph
 
@@ -15,7 +13,7 @@ class Variable:
         self.prior_id = prior_id
 
         self.inbox = {}
-        self.connected_factors = [prior_id, left_id, right_id]
+        self.connected_factors = [left_id, right_id]
 
         self.graph = graph
 
@@ -42,19 +40,19 @@ class Variable:
         '''
         Consume the messages in the inbox to update belief
         '''
-        curr = Gaussian.zeros_like(self.belief)
+        self.belief = Gaussian.zeros_like(self.belief)
 
         for _, message in self.inbox.items():
-            curr *= message
+            self.belief *= message
 
         # if not torch.is_nonzero(curr.lmbda): print('We are having a serious problem in the variable')
-
-        self.belief = curr.clone()
 
     def compute_and_send_messages(self) -> None:
         '''
         Equation 2.50, 2.51 in Ortiz (2023)
         '''
+        self.update_belief()
+
         for fid in self.connected_factors:
             if fid == -1: continue
 
@@ -96,14 +94,12 @@ class Parameter:
         '''
         Consume the messages in the inbox to update belief
         '''
-        curr = Gaussian.zeros_like(self.belief)
+        self.belief = Gaussian.zeros_like(self.belief)
 
         for _, message in self.inbox.items():
-            curr *= message
+            self.belief *= message
 
         # if not torch.is_nonzero(curr.lmbda): print('We Hebben Een Serieus Probleem in the parameter')
-
-        self.belief = curr
 
     def send_initial_messages(self) -> None:
         for fid in self.connected_factors:

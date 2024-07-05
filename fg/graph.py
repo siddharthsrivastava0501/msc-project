@@ -36,11 +36,15 @@ class Graph:
     def update_variable_belief(self, key):
         self.var_nodes[key].update_belief()
 
-    def update_factor_belief(self, key):
-        self.factor_nodes[key].update_belief()
-
     def update_all_beliefs(self):
         for key in self.var_nodes:
             self.update_variable_belief(key)
-        for key in self.factor_nodes:
-            self.update_factor_belief(key)
+
+    def prune(self):
+        '''
+        Remove all the observational and prior factors from the fg so that they
+        don't store unnecessary messages and slow down BP / use up memory
+        '''
+        for k, v in list(self.factor_nodes.items()):
+            if v.__class__.__name__ == 'PriorFactor' or v.__class__.__name__ == 'ObservationFactor':
+                del self.factor_nodes[k]
