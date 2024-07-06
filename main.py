@@ -5,17 +5,15 @@ from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
 import matplotlib.pyplot as plt
-import gc
-
 
 if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
     sigma_prior = 1e1
-    iters = 50
+    iters = 100
 
     config = {
-        'T': 10.,
+        'T': 8.,
         'dt': 0.01,
         'k1': 10.,
         'k2': 12.,
@@ -68,7 +66,7 @@ if __name__ == "__main__":
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.zeros((1,)), torch.tensor([[sigma_prior ** -2]]),
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]), torch.tensor([[sigma_prior ** -2]]),
                                                                   factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
@@ -117,8 +115,6 @@ if __name__ == "__main__":
         factor_graph.update_params()
 
         factor_graph.update_all_beliefs()
-
-        gc.collect()
 
     print('actually ran?')
 

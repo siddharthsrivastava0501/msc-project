@@ -163,7 +163,7 @@ class DynamicsFactor:
         eta = J.T @ self.lmbda_in @ (J @ x0 - self.h)
         lmbda = (J.T @ self.lmbda_in) @ J
 
-        return Gaussian.from_canonical(eta, lmbda)
+        return Gaussian.from_canonical(eta.detach(), lmbda.detach())
 
     def compute_huber(self) -> float:
         # Equation 3.16 in Ortiz (2023)
@@ -180,7 +180,7 @@ class DynamicsFactor:
         return kR
 
 
-    def _compute_message_to_i(self, i, beta = 0.25) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.3) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
