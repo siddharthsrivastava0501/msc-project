@@ -1,6 +1,7 @@
 from fg.variables import Variable, Parameter
 from fg.factors import DynamicsFactor, ObservationFactor, PriorFactor
-from fg.simulation_config import sig, simulate_signal, tanh
+from fg.functions import sig
+from fg.simulation_config import simulate_signal
 from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
@@ -10,17 +11,17 @@ if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
     sigma_prior = 1e1
-    iters = 100
+    iters = 200
 
     config = {
-        'T': 8.,
+        'T': 6.,
         'dt': 0.01,
-        'k1': 10.,
-        'k2': 12.,
-        'k3': 9.,
-        'k4': 3.,
+        'k1': 5.,
+        'k2': 5.,
+        'k3': 5.,
+        'k4': 5.,
         'P': 0.2,
-        'Q': 0.5,
+        'Q': 0.2,
     }
 
     E, I = simulate_signal(config)
@@ -59,15 +60,15 @@ if __name__ == "__main__":
     for i in range(len(t)):
         if i+1 < len(t):
             dyn_id = (i, i+1)
-            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), dyn_id, factor_graph)
+            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2, 0.], [0., sigma_dynamics ** -2]]), dyn_id, factor_graph)
 
             for _,p in param_dict.items():
                 p.connected_factors.append(dyn_id)
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]), torch.tensor([[sigma_prior ** -2]]),
-                                                                  factor_graph)
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]),
+            torch.diag(torch.tensor([sigma_prior ** 2.])), factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
@@ -85,7 +86,6 @@ if __name__ == "__main__":
             # This should ensure all var to dynamics factor messages have non-zero precision
             for i in factor_graph.var_nodes:
                 curr = factor_graph.var_nodes[i]
-                curr.update_belief()
                 curr.compute_and_send_messages()
 
             factor_graph.prune()
@@ -116,14 +116,9 @@ if __name__ == "__main__":
 
         factor_graph.update_all_beliefs()
 
-    print('actually ran?')
-
-    config['k1'] = param_dict['k1'].mean.item()
-    config['k2'] = param_dict['k2'].mean.item()
-    config['k3'] = param_dict['k3'].mean.item()
-    config['k4'] = param_dict['k4'].mean.item()
-    config['P'] = param_dict['P'].mean.item()
-    config['Q'] = param_dict['Q'].mean.item()
+    # Update params with what we have learnt
+    for k, p in param_dict.items():
+        config[k] = p.mean.item()
 
     E_rec, I_rec = simulate_signal(config)
 

@@ -90,8 +90,8 @@ class Gaussian:
         axis_a = [idx for idx in range(info.shape[0]) if idx in dim]
         axis_b = [idx for idx in range(info.shape[0]) if idx not in dim]
 
-        info_a = info[np.ix_(axis_a, [0])]
-        info_b = info[np.ix_(axis_b, [0])]
+        info_a = info[axis_a]
+        info_b = info[axis_b]
         prec_aa = prec[np.ix_(axis_a, axis_a)]
         prec_ab = prec[np.ix_(axis_a, axis_b)]
         prec_ba = prec[np.ix_(axis_b, axis_a)]

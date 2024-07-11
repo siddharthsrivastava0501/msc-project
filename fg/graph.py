@@ -29,8 +29,8 @@ class Graph:
             self.var_nodes[p].send_initial_messages()
 
     def update_all_observational_factors(self):
-        for key in self.factor_nodes:
-            if not isinstance(key, tuple):
+        for key, v in self.factor_nodes.items():
+            if v.__class__.__name__ == 'PriorFactor' or v.__class__.__name__ == 'ObservationFactor':
                 self.factor_nodes[key].compute_and_send_messages()
 
     def update_variable_belief(self, key):

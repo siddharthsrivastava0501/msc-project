@@ -66,9 +66,10 @@ class Variable:
         return f'Variable {self.id} [mu={self.mean}, cov={self.cov}]'
 
 class Parameter:
-    def __init__(self, id, belief : Gaussian, graph : Graph, connected_factors : list):
+    def __init__(self, id, belief : Gaussian, graph : Graph, connected_factors : list, num_vars : int = 1):
         self.id = id
         self.belief = belief
+        self.num_vars = num_vars
 
         self.inbox = {}
         self.connected_factors = connected_factors

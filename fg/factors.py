@@ -2,7 +2,7 @@ import torch
 from torch import Tensor
 from .graph import Graph
 from .gaussian import Gaussian
-from .simulation_config import dIdt, sig, dEdt
+from .functions import dIdt, sig, dEdt
 
 class ObservationFactor:
     def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph, huber = False) -> None:
@@ -14,7 +14,7 @@ class ObservationFactor:
 
         self.lmbda_in = lmbda_in
 
-        J = torch.eye(2)
+        J = torch.eye(self.lmbda_in.shape[0])
 
         # Equation 2.46, 2.47 in Ortiz (2023)
         self.belief = Gaussian.from_canonical((J.T @ lmbda_in) @ z, (J.T @ lmbda_in) @ J)
@@ -63,7 +63,7 @@ class PriorFactor:
         self.z = z
         self.lmbda_in = lmbda_in
 
-        J = torch.ones((1,1))
+        J = torch.eye(self.lmbda_in.shape[0])
 
         # Equation 2.46, 2.47 in Ortiz (2023)
         self.belief = Gaussian.from_canonical((J.T @ lmbda_in) @ z, (J.T @ lmbda_in) @ J)
@@ -128,6 +128,11 @@ class DynamicsFactor:
 
         self.huber = huber
 
+    def _h_fn(self, Et, Etp, It, Itp, k_1, k_2, k_3, k_4, p = 0.2, q = 0.2):
+        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, k_1, k_2, p))
+        h_inh = Itp - (It + 0.01 * dIdt(Et, It, k_3, k_4, q))
+        return torch.concat([h_ext, h_inh], dim=1)
+
     def linearise(self) -> Gaussian:
         '''
         Returns the linearised Gaussian factor based on equations 2.46 and 2.47 in Ortiz (2023)
@@ -146,21 +151,18 @@ class DynamicsFactor:
 
         Et_mu, It_mu = connected_variables[0:2]
         Etp_mu, Itp_mu = connected_variables[2:4]
-        k1, k2, k3, k4 = connected_variables[4:8]
-        P,Q = connected_variables[8:]
-
-        h_ext = Etp_mu - (Et_mu + 0.01 * dEdt(Et_mu, It_mu, k1, k2, P))
-        h_inh = Itp_mu - (It_mu + 0.01 * dIdt(Et_mu, It_mu, k3, k4, Q))
+        k1, k2, k3, k4, P, Q = connected_variables[4:]
 
         # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
         # Want to minimise the Euler expansion of both the ext. DE and inh. DE
-        self.h = h_ext + h_inh
-        self.h.backward()
+        self.h = self._h_fn(Et_mu, Etp_mu, It_mu, Itp_mu, k1, k2, k3, k4, P, Q)
 
-        J = torch.tensor([[v.grad for v in connected_variables if v.grad is not None]])
-        x0 = torch.cat([v for v in connected_variables])
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, Etp_mu, It_mu, Itp_mu, k1, k2, k3, k4, P, Q)), 0)[..., 0, 0].T
 
-        eta = J.T @ self.lmbda_in @ (J @ x0 - self.h)
+        x0 = torch.concat([v for v in connected_variables], dim=0)
+
+        # Have to transpose the h here because otherwise the dimensions don't line up?
+        eta = J.T @ self.lmbda_in @ (-self.h.T + J @ x0)
         lmbda = (J.T @ self.lmbda_in) @ J
 
         return Gaussian.from_canonical(eta.detach(), lmbda.detach())
@@ -180,7 +182,7 @@ class DynamicsFactor:
         return kR
 
 
-    def _compute_message_to_i(self, i, beta = 0.3) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.25) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
@@ -222,7 +224,7 @@ class DynamicsFactor:
 
         marginal = factor_product.marginalise(idx_to_marginalise)
 
-        kR = self.compute_huber()
+        kR = 1.
         marginal *= kR
 
         prev_msg = self._prev_messages.get(i, Gaussian.zeros_like(marginal))
