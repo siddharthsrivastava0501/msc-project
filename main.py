@@ -16,10 +16,10 @@ if __name__ == "__main__":
     config = {
         'T': 6.,
         'dt': 0.01,
-        'k1': 5.,
-        'k2': 5.,
-        'k3': 5.,
-        'k4': 5.,
+        'k1': 5.2,
+        'k2': 6.9,
+        'k3': 8.3,
+        'k4': 2.6,
         'P': 0.2,
         'Q': 0.2,
     }
@@ -36,9 +36,9 @@ if __name__ == "__main__":
         'k1': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k2': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k3': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
+        # 'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        # 'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        # 'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
@@ -60,15 +60,15 @@ if __name__ == "__main__":
     for i in range(len(t)):
         if i+1 < len(t):
             dyn_id = (i, i+1)
-            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2, 0.], [0., sigma_dynamics ** -2]]), dyn_id, factor_graph)
+            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), dyn_id, factor_graph)
 
             for _,p in param_dict.items():
                 p.connected_factors.append(dyn_id)
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]),
-            torch.diag(torch.tensor([sigma_prior ** 2.])), factor_graph)
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]), torch.tensor([[sigma_prior ** -2]]),
+                                                                  factor_graph)
 
     # == RUN GBP (Sweep schedule) === #
     for iter in range(iters):
@@ -116,7 +116,6 @@ if __name__ == "__main__":
 
         factor_graph.update_all_beliefs()
 
-    # Update params with what we have learnt
     for k, p in param_dict.items():
         config[k] = p.mean.item()
 
