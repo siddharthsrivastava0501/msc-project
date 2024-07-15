@@ -18,12 +18,11 @@ def simulate_signal(config : dict) -> tuple[Tensor, Tensor]:
     Q = config.get('Q', 0.5)
     tauE = config.get('tauE', 1.)
     tauI = config.get('tauI', 2.)
-    act = config.get('act', sig)
 
     simulation_info = (
         f"Running simulation with: "
         f"T = {T}, dt = {dt}, k1 = {k1}, k2 = {k2}, k3 = {k3}, k4 = {k4}, "
-        f"P = {P}, Q = {Q}, tauE = {tauE}, tauI = {tauI}, act = {act.__name__}"
+        f"P = {P}, Q = {Q}, tauE = {tauE}, tauI = {tauI}"
     )
     print(simulation_info)
 
@@ -35,7 +34,7 @@ def simulate_signal(config : dict) -> tuple[Tensor, Tensor]:
     I[0] = 0.4
 
     for i in range(len(t) - 1):
-        E[i + 1] = E[i] + dt * dEdt(E[i], I[i], k1, k2, P, tauE, act)
-        I[i + 1] = I[i] + dt * dIdt(E[i], I[i], k3, k4, Q, tauI, act)
+        E[i + 1] = E[i] + dt * dEdt(E[i], I[i], k1, k2, P, tauE)
+        I[i + 1] = I[i] + dt * dIdt(E[i], I[i], k3, k4, Q, tauI)
 
     return E, I

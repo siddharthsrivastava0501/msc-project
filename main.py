@@ -6,27 +6,30 @@ from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
 import matplotlib.pyplot as plt
+import numpy as np
 
 if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
-    sigma_prior = 1e1
+    sigma_prior = 2e0
     iters = 200
 
     config = {
-        'T': 6.,
+        'T': 9,
         'dt': 0.01,
-        'k1': 5.2,
-        'k2': 6.9,
-        'k3': 8.3,
-        'k4': 2.6,
-        'P': 0.2,
-        'Q': 0.2,
+        'k1': 3. + np.random.normal(),
+        'k2': 5. + np.random.normal(),
+        'k3': 4. + np.random.normal(),
+        'k4': 3. + np.random.normal(),
+        'P': 1.  + np.random.normal(0, 0.1),
+        'Q': 1.  + np.random.normal(0, 0.1),
     }
 
     E, I = simulate_signal(config)
     t = torch.arange(0, len(E), 1)
-
+    plt.plot(E)
+    plt.plot(I)
+    plt.show()
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
 
     factor_graph = Graph()
@@ -36,9 +39,9 @@ if __name__ == "__main__":
         'k1': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k2': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k3': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        # 'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        # 'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        # 'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
+        'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
     }
 
     # -- Construct FG -- #
@@ -67,14 +70,17 @@ if __name__ == "__main__":
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([0.]), torch.tensor([[sigma_prior ** -2]]),
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([3.]), torch.tensor([[sigma_prior ** -2]]),
                                                                   factor_graph)
 
-    # == RUN GBP (Sweep schedule) === #
+    # === RUN GBP (Sweep schedule) === #
     for iter in range(iters):
         print(f'Iteration {iter}')
         for k, v in param_dict.items():
             print(k, v)
+
+            if v.belief.eta.isnan().any(): exit(0)
+
         print('------')
 
         if iter == 0:
