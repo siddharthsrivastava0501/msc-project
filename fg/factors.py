@@ -132,6 +132,13 @@ class DynamicsFactor:
         h_ext = Etp - (Et + 0.01 * dEdt(Et, It, k_1, k_2, p))
         h_inh = Itp - (It + 0.01 * dIdt(Et, It, k_3, k_4, q))
         return torch.concat([h_ext, h_inh], dim=1)
+    
+    def _hopf_h_fn(self, Et, Etp, It, Itp, a, omega, beta): 
+        dE, dI = hdEdt_dIdt(Et, It, a, omega, beta)
+        h_ext = Etp - (Et + 0.01 * dE)
+        h_inh = Itp - (It + 0.01 * dI)
+        return torch.concat([h_ext, h_inh], dim=1)
+    
 
     def linearise(self) -> Gaussian:
         '''
@@ -181,8 +188,7 @@ class DynamicsFactor:
 
         return kR
 
-
-    def _compute_message_to_i(self, i, beta = 0.25) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.1) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'

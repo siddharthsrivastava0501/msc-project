@@ -1,7 +1,7 @@
 from fg.variables import Variable, Parameter
 from fg.factors import DynamicsFactor, ObservationFactor, PriorFactor
 from fg.functions import sig
-from fg.simulation_config import simulate_signal
+from fg.simulation_config import simulate_wc
 from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
@@ -25,7 +25,7 @@ if __name__ == "__main__":
         'Q': 1.  + np.random.normal(0, 0.1),
     }
 
-    E, I = simulate_signal(config)
+    E, I = simulate_wc(config)
     t = torch.arange(0, len(E), 1)
     plt.plot(E)
     plt.plot(I)
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     for k, p in param_dict.items():
         config[k] = p.mean.item()
 
-    E_rec, I_rec = simulate_signal(config)
+    E_rec, I_rec = simulate_wc(config)
 
     plt.plot(E, label='GT E')
     plt.plot(I, label='GT I')

@@ -5,17 +5,18 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
 
-def hopf(x, y, a, omega, v, beta = 0.):
+from fg.functions import pairwise_difference_matrix
+
+def hopf(X, Y, a, omega, v, beta = 0.):
     """
     Hopf equation from Equation 4 and 5 of Deco & Kringelbach, 2020
     "Turbulent-like Dynamics in the Human Brain"
     """
-    square_term = (x**2 + y**2)
-    noise = np.random.normal(0,1)
-    dx = a*x + square_term*(beta * y - x) - omega*y + v*noise
-    dy = a*y - square_term*(beta * x + y) - omega*x + v*noise
-
-    return dx, dy
+    noise = v * np.random.normal(size=X.shape)
+    square_term = X**2 + Y**2
+    dX = a*X - omega*Y + square_term*(beta*Y - X) + noise
+    dY = a*Y + omega*X + square_term*(beta*X + Y) + noise
+    return dX, dY
 
 # Constants
 dt = 0.01
@@ -30,9 +31,9 @@ Y = np.zeros((n_regions, len(times)))
 X[0] = x_init
 Y[0] = y_init
 
-a = np.random.normal(-0.02, 0.01, (n_regions,))
-omega = np.random.normal(0.1, 0.05, (n_regions,))
-v = np.random.normal(0.01, 0.005, (n_regions,))
+a = np.full((n_regions, ), -0.02)
+omega = np.full((n_regions, ), 0.1)
+v = np.full((n_regions, ), 0.01)
 beta = 0.1
 G = 0.8
 
@@ -41,27 +42,22 @@ C = pd.read_csv('./fmri/DTI_fiber_consensus_HCP.csv', header=None).to_numpy()[:n
 C /= C.sum(axis=1)[:, np.newaxis]
 np.fill_diagonal(C, 0)
 
-print(C.shape)
+print(X[:, 0].size)
 
 for t in range(len(times)-1):
-    for n in range(n_regions):
-        x_coupling = 0
-        y_coupling = 0
-        for p in range(n_regions):
-            x_coupling += C[n,p]*(X[p, t] - X[n, t])
-            y_coupling += C[n,p]*(Y[p, t] - Y[n, t])
+    X_coupling = G * np.sum(C @ pairwise_difference_matrix(X[:, t]), axis=0)
+    Y_coupling = G * np.sum(C @ pairwise_difference_matrix(Y[:, t]), axis=0)
 
-        dx, dy = hopf(X[n, t], Y[n, t], a = a[n], omega = omega[n], v = v[n], beta = beta)
-
-        X[n, t+1] = X[n, t] + dt * (dx + G * x_coupling)
-        Y[n, t+1] = Y[n, t] + dt * (dy + G * y_coupling)
+    dX, dY = hopf(X[:, t], Y[:, t], a, omega, v, beta)
+    X[:, t+1] = X[:, t] + dt * (dX + X_coupling)
+    Y[:, t+1] = Y[:, t] + dt * (dY + Y_coupling)
 
 # Fig. 1: X as a function of time
 plt.figure()
+# plt.plot(X[0])
 plt.plot(X[1])
-plt.plot(X[2])
-plt.plot(X[3])
-plt.plot(X[4])
+# plt.plot(X[3])
+# plt.plot(X[4])
 plt.xlabel("Time")
 plt.ylabel("X")
 plt.show()
