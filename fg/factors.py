@@ -211,22 +211,22 @@ class DynamicsFactor:
                 # we have to correctly offset our product Gaussian with 2 if
                 # our j is at the 0th or 1st element. Otherwise just continue as
                 # normal.
-                offset = 2 if j in [0,1] else 1
+                offset = in_msg.eta.numel()
                 product.eta[k : k+offset] += in_msg.eta
                 product.lmbda[k : k+offset, k : k+offset] += in_msg.lmbda
 
                 k += offset
             else:
-                k += 2 if i in [0,1] else 1
-
+                k += self.graph.var_nodes[self._connected_vars[i]].num_vars
+                # k += 2 if i in [0,1] else 1
+ 
         factor_product = linearised_factor * product
 
-        # Absolute monkey logic at the moment to find out what indices to keep
-        # when we perform the marginalisation for msg. passing
-        match i:
-            case 0: idx_to_marginalise = [0,1]      # This is Vt
-            case 1: idx_to_marginalise = [2,3]      # This is Vtp
-            case _: idx_to_marginalise = [i+2]      # This is the parameters
+        start_idx = 0
+        for k in range(i):
+            start_idx += self.graph.var_nodes[self._connected_vars[k]].num_vars
+
+        idx_to_marginalise = list(range(start_idx, start_idx + self.graph.var_nodes[self._connected_vars[i]].num_vars))
 
         marginal = factor_product.marginalise(idx_to_marginalise)
 

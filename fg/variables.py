@@ -4,9 +4,10 @@ from .gaussian import Gaussian
 from .graph import Graph
 
 class Variable:
-    def __init__(self, id, belief : Gaussian, left_id, right_id, prior_id, graph : Graph) -> None:
+    def __init__(self, id, belief : Gaussian, left_id, right_id, prior_id, graph : Graph, num_vars : int = 1) -> None:
         self.id = id
         self.belief = belief
+        self.num_vars = num_vars
 
         self.left_id = left_id
         self.right_id = right_id
@@ -63,7 +64,7 @@ class Variable:
             self.graph.send_msg_to_factor(self.id, fid, msg)
 
     def __str__(self):
-        return f'Variable {self.id} [mu={self.mean}, cov={self.cov}]'
+        return f'Variable {self.id} [n = {self.num_vars}, mu={self.mean}, cov={self.cov}]'
 
 class Parameter:
     def __init__(self, id, belief : Gaussian, graph : Graph, connected_factors : list, num_vars : int = 1):
@@ -117,4 +118,4 @@ class Parameter:
             self.graph.send_msg_to_factor(self.id, fid, msg)
 
     def __str__(self):
-        return f'Parameter {self.id} [mu={self.mean}, cov={self.cov}]'
+        return f'Parameter {self.id} [n = {self.num_vars}, mu={self.mean}, cov={self.cov}]'

@@ -15,7 +15,7 @@ if __name__ == "__main__":
     iters = 200
 
     config = {
-        'T': 9,
+        'T': 12,
         'dt': 0.01,
         'k1': 3. + np.random.normal(),
         'k2': 5. + np.random.normal(),
@@ -37,17 +37,18 @@ if __name__ == "__main__":
     # Add 0 as id as we populate them later
     param_dict = {
         'k1': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
+        # 'ks': Parameter(0, Gaussian(torch.tensor([[0.] * 4]).T, torch.diag(torch.tensor([sigma_prior ** 2.] * 4))), factor_graph, [], 4),
         'k2': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k3': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
         'k4': Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, []),
-        'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.tensor([[sigma_prior ** 2.]])), factor_graph, [])
+        'P':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.diag(torch.tensor([sigma_prior ** 2.]))), factor_graph, [], 1),
+        'Q':  Parameter(0, Gaussian(torch.tensor([[0.]]), torch.diag(torch.tensor([sigma_prior ** 2.]))), factor_graph, [], 1)
     }
 
     # -- Construct FG -- #
     # Add our variable and observation factors at each time step
     for i in range(len(t)):
-        factor_graph.var_nodes[i] = Variable(i, Gaussian(torch.tensor([[0., 0.]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i, factor_graph)
+        factor_graph.var_nodes[i] = Variable(i, Gaussian(torch.tensor([[0., 0.]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i, factor_graph, 2)
         factor_graph.factor_nodes[i] = ObservationFactor(i, i, torch.tensor([[E[i], I[i]]]).T, torch.tensor([[sigma_obs ** -2, 0.], [0., sigma_obs ** -2]]), factor_graph)
 
     # Add our parameters as additional variables to our factor graph
@@ -70,7 +71,7 @@ if __name__ == "__main__":
 
     # Zero mean priors on the parameters
     for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([3.]), torch.tensor([[sigma_prior ** -2]]),
+        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([[3.] * p.num_vars]).T, torch.diag(torch.tensor([sigma_prior ** -2] * p.num_vars)),
                                                                   factor_graph)
 
     # === RUN GBP (Sweep schedule) === #
