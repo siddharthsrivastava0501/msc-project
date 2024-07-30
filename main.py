@@ -48,30 +48,34 @@ if __name__ == "__main__":
     # -- Construct FG -- #
     # Add our variable and observation factors at each time step
     for i in range(len(t)):
-        factor_graph.var_nodes[i] = Variable(i, Gaussian(torch.tensor([[0., 0.]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), -1 if i == 0 else (i-1, i), -1 if i+1 == len(t) else (i,i+1), i, factor_graph, 2)
-        factor_graph.factor_nodes[i] = ObservationFactor(i, i, torch.tensor([[E[i], I[i]]]).T, torch.tensor([[sigma_obs ** -2, 0.], [0., sigma_obs ** -2]]), factor_graph)
+        factor_graph.var_nodes[f'o{i}'] = Variable(f'o{i}', 
+                                                   Gaussian(torch.tensor([[0.1, 0.1]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), 
+                                                   -1 if i == 0        else (f'o{i-1}', f'o{i}'),
+                                                   -1 if i+1 == len(t) else (f'o{i}', f'o{i+1}'),
+                                                   (f'x{i}', f'o{i}'), 
+                                                   factor_graph, 
+                                                   2)
+        
+        factor_graph.factor_nodes[f'o{i}'] = ObservationFactor(f'o{i}', f'o{i}', torch.tensor([[E[i], I[i]]]).T, torch.tensor([[sigma_obs ** -2, 0.], [0., sigma_obs ** -2]]), factor_graph)
 
     # Add our parameters as additional variables to our factor graph
-    k = len(t)
-    for _,p in param_dict.items():
-        p.id = k
+    for p_id, (_,p) in enumerate(param_dict.items()):
+        p.id = f'p{p_id}'
         factor_graph.param_ids.append(p.id)
         factor_graph.var_nodes[p.id] = p
-
-        k += 1
 
     # Connect dynamics factors between timestep i and i+1 and connect each dyn. factor to our parameters
     for i in range(len(t)):
         if i+1 < len(t):
-            dyn_id = (i, i+1)
-            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(i, i+1, torch.tensor([[sigma_dynamics ** -2]]), dyn_id, factor_graph)
+            dyn_id = (f'o{i}', f'o{i+1}')
+            factor_graph.factor_nodes[dyn_id] = DynamicsFactor(f'o{i}', f'o{i+1}', torch.tensor([[sigma_dynamics ** -2]]), dyn_id, factor_graph)
 
             for _,p in param_dict.items():
                 p.connected_factors.append(dyn_id)
 
     # Zero mean priors on the parameters
-    for i, (_,p) in enumerate(param_dict.items()):
-        factor_graph.factor_nodes[i + p.id] = PriorFactor(i + p.id, p.id, torch.tensor([[3.] * p.num_vars]).T, torch.diag(torch.tensor([sigma_prior ** -2] * p.num_vars)),
+    for p_id, (_,p) in enumerate(param_dict.items()):
+        factor_graph.factor_nodes[f'p{p_id}'] = PriorFactor(f'p{p_id}', p.id, torch.tensor([[3.] * p.num_vars]).T, torch.diag(torch.tensor([sigma_prior ** -2] * p.num_vars)),
                                                                   factor_graph)
 
     # === RUN GBP (Sweep schedule) === #
@@ -99,7 +103,7 @@ if __name__ == "__main__":
 
         # -- RIGHT PASS --
         for i in range(len(t)):
-            curr = factor_graph.var_nodes[i]
+            curr = factor_graph.var_nodes[f'o{i}']
             curr.compute_and_send_messages()
 
             if curr.right_id == -1: continue
@@ -111,7 +115,7 @@ if __name__ == "__main__":
 
         # -- LEFT PASS --
         for i in range(len(t)-1, -1, -1):
-            curr = factor_graph.var_nodes[i]
+            curr = factor_graph.var_nodes[f'o{i}']
             curr.compute_and_send_messages()
 
             if curr.left_id == -1: continue

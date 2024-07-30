@@ -245,3 +245,7 @@ class DynamicsFactor:
         for i, var_id in enumerate(self._connected_vars):
             msg = self._compute_message_to_i(i)
             self.graph.send_msg_to_variable(self.factor_id, var_id, msg)
+
+    def __str__(self):
+        return f'Dynamics: [{self.Vt_id} -- {self.Vtp_id}], z = {self.z}' 
+
