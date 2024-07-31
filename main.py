@@ -15,7 +15,7 @@ if __name__ == "__main__":
     iters = 200
 
     config = {
-        'T': 12,
+        'T': 5,
         'dt': 0.01,
         'k1': 3. + np.random.normal(),
         'k2': 5. + np.random.normal(),
@@ -52,7 +52,7 @@ if __name__ == "__main__":
                                                    Gaussian(torch.tensor([[0.1, 0.1]]).T, torch.tensor([[0.2, 0.], [0., 0.2]])), 
                                                    -1 if i == 0        else (f'o{i-1}', f'o{i}'),
                                                    -1 if i+1 == len(t) else (f'o{i}', f'o{i+1}'),
-                                                   (f'x{i}', f'o{i}'), 
+                                                   -1, 
                                                    factor_graph, 
                                                    2)
         
