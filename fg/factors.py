@@ -46,7 +46,7 @@ class ObservationFactor:
         return kR
 
     def compute_and_send_messages(self) -> None:
-        kR = self.compute_huber()
+        kR = 1.
 
         message = self.belief * kR
         self.graph.send_msg_to_variable(self.factor_id, self.var_id, message)
@@ -108,13 +108,13 @@ class DynamicsFactor:
     Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
     and is also connected to learnable parameters given by `parameters`.
     '''
-    def __init__(self, Vt_id, Vtp_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False) -> None:
+    def __init__(self, Vt_id, Vtp_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False, connected_params = []) -> None:
         self.Vt_id, self.Vtp_id = Vt_id, Vtp_id
         self.lmbda_in = lmbda_in
         self.factor_id = factor_id
         self.graph : Graph = graph
 
-        self.parameters = graph.param_ids
+        self.parameters = connected_params
 
         self.N_sigma = torch.sqrt(lmbda_in)
         self.z = 0
@@ -128,9 +128,9 @@ class DynamicsFactor:
 
         self.huber = huber
 
-    def _h_fn(self, Et, It, Etp, Itp, k_1 = 5.2, k_2 = 6.9, k_3 = 8.3, k_4 = 3., p = 1., q = 1.):
-        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, k_1, k_2, p))
-        h_inh = Itp - (It + 0.01 * dIdt(Et, It, k_3, k_4, q))
+    def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
+        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, 0., a, b, 1.))
+        h_inh = Itp - (It + 0.01 * dIdt(Et, It, 0., c, d, 1.))
         return torch.concat([h_ext, h_inh], dim=1)
     
 
@@ -152,13 +152,13 @@ class DynamicsFactor:
 
         Et_mu, It_mu = connected_variables[0:2]
         Etp_mu, Itp_mu = connected_variables[2:4]
-        k1, k2, k3, k4, P, Q = connected_variables[4:]
+        a,b,c,d = connected_variables[4:]
 
         # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
         # Want to minimise the Euler expansion of both the ext. DE and inh. DE
-        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, k_1 = k1, k_2 = k2, k_3 = k3, k_4 = k4, p = P, q = Q)
+        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d)
 
-        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, k1, k2, k3, k4, P, Q)), 0)[..., 0, 0].T
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d)), 0)[..., 0, 0].T
 
         x0 = torch.concat([v for v in connected_variables], dim=0)
 

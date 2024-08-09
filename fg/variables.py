@@ -4,17 +4,13 @@ from .gaussian import Gaussian
 from .graph import Graph
 
 class Variable:
-    def __init__(self, id, belief : Gaussian, left_id, right_id, prior_id, graph : Graph, num_vars : int = 1) -> None:
+    def __init__(self, id, belief : Gaussian, graph : Graph, num_vars : int = 1, connected_factors = []) -> None:
         self.id = id
         self.belief = belief
         self.num_vars = num_vars
 
-        self.left_id = left_id
-        self.right_id = right_id
-        self.prior_id = prior_id
-
         self.inbox = {}
-        self.connected_factors = [left_id, right_id]
+        self.connected_factors = connected_factors
 
         self.graph = graph
 
