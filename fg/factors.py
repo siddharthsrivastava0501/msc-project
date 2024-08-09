@@ -3,6 +3,8 @@ from torch import Tensor
 from .graph import Graph
 from .gaussian import Gaussian
 from .functions import dIdt, sig, dEdt
+import re
+import numpy as np
 
 class ObservationFactor:
     def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph, huber = False) -> None:
@@ -108,8 +110,10 @@ class DynamicsFactor:
     Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
     and is also connected to learnable parameters given by `parameters`.
     '''
-    def __init__(self, Vt_id, Vtp_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False, connected_params = []) -> None:
+    def __init__(self, Vt_id, Vtp_id, region_id, conn, lmbda_in : Tensor, factor_id, graph : Graph, huber = False, connected_params = []) -> None:
         self.Vt_id, self.Vtp_id = Vt_id, Vtp_id
+        self.r = region_id
+        self.C = conn
         self.lmbda_in = lmbda_in
         self.factor_id = factor_id
         self.graph : Graph = graph
@@ -129,8 +133,13 @@ class DynamicsFactor:
         self.huber = huber
 
     def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
-        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, 0., a, b, 1.))
-        h_inh = Itp - (It + 0.01 * dIdt(Et, It, 0., c, d, 1.))
+        curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
+        E_sum = np.sum([self.C[self.r, r_id] * self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()[0] for r_id in range(self.graph.nr) if self.r != r_id])
+        I_sum = np.sum([self.C[self.r, r_id] * self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()[1] for r_id in range(self.graph.nr) if self.r != r_id])
+
+
+        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, E_sum, a, b, 1.))
+        h_inh = Itp - (It + 0.01 * dIdt(Et, It, I_sum, c, d, 1.))
         return torch.concat([h_ext, h_inh], dim=1)
     
 

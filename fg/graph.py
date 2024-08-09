@@ -2,10 +2,11 @@ from .gaussian import Gaussian
 from typing import Any
 
 class Graph:
-    def __init__(self):
+    def __init__(self, nr):
         self.var_nodes    = {}
         self.factor_nodes = {}
         self.param_ids    : list[Any] = []
+        self.nr           = nr
 
     def get_var_belief(self, key) -> Gaussian:
         return self.var_nodes[key].belief
