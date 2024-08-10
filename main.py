@@ -9,14 +9,12 @@ import numpy as np
 import multiprocessing as mp
 
 def process_oscillator(args):
-    print(f'OSCcalled for {args}')
     t, r = args
     curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
     curr.compute_and_send_messages()
 
 def process_dynamics(args):
     t, r = args
-    print(f'DYNcalled for {args}')
     factor_graph.factor_nodes[(f'osc_t{t}_r{r}', f'osc_t{t+1}_r{r}')].compute_and_send_messages()
 
 
@@ -24,10 +22,10 @@ if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
     sigma_prior = 1e1
-    iters = 200
+    iters = 150
     T = 8
     nr = 1
-    dt = 0.01
+    dt = 0.05
 
     C = torch.empty((nr, nr)).normal_(0.2, 0.1)
     C.fill_diagonal_(0.)
@@ -165,3 +163,20 @@ if __name__ == "__main__":
                 factor_graph.factor_nodes[(f'osc_t{t-1}_r{r}', f'osc_t{t}_r{r}')].compute_and_send_messages()
             
         factor_graph.update_params()
+
+
+    # update config and plot both
+    for k in param_list:
+        for r in range(nr):
+            t = f'p({k})_r{r}'
+            config[k][r] = factor_graph.get_var_belief(t).mean
+
+    config['dyn_noise'] = False
+
+    E_rec, I_rec = simulate_wc(config)
+    plt.plot(E, label='GT E')
+    plt.plot(I, label='GT I')
+    plt.plot(E_rec, label='E rec')
+    plt.plot(I_rec, label='I rec')
+    plt.legend()
+    plt.show()

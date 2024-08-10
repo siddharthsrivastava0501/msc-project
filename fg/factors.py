@@ -142,8 +142,8 @@ class DynamicsFactor:
             E_sum += self.C[self.r, r_id] * belief[0] 
             I_sum += self.C[self.r, r_id] * belief[1]
 
-        h_ext = Etp - (Et + 0.01 * dEdt(Et, It, E_sum, a, b, 1.))
-        h_inh = Itp - (It + 0.01 * dIdt(Et, It, I_sum, c, d, 1.))
+        h_ext = Etp - (Et + 0.05 * dEdt(Et, It, E_sum, a, b, 1.))
+        h_inh = Itp - (It + 0.05 * dIdt(Et, It, I_sum, c, d, 1.))
         return torch.concat([h_ext, h_inh], dim=1)
     
 

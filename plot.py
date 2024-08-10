@@ -1,66 +1,72 @@
 import re
 import matplotlib.pyplot as plt
+import numpy as np
 
-# Function to extract data from the text
-def extract_data(text):
-    parameters = ['k1', 'k2', 'k3', 'k4', 'P', 'Q']
-    data = {param: {'mu': [], 'cov': []} for param in parameters}
+def parse_debug_file(filename):
+    with open(filename, 'r') as file:
+        content = file.read()
 
-    for line in text.split('\n'):
-        for param in parameters:
-            if line.startswith(f'{param} Parameter'):
-                mu = float(re.search(r'mu=tensor\(\[\[(.*?)\]\]', line).group(1))
-                cov = float(re.search(r'cov=tensor\(\[\[(.*?)\]\]', line).group(1))
-                data[param]['mu'].append(mu)
-                data[param]['cov'].append(cov)
+    # Extract ground truth values
+    match = re.search(r'a = tensor\(\[(.*?)\]\), b = tensor\(\[(.*?)\]\), c = tensor\(\[(.*?)\]\), d = tensor\(\[(.*?)\]\)', content)
+    ground_truth = list(map(float, match.groups()))
 
-    return data
+    # Initialize data structures
+    iterations = []
+    mu_data = {'a': [], 'b': [], 'c': [], 'd': []}
+    cov_data = {'a': [], 'b': [], 'c': [], 'd': []}
 
-# Extract ground truth parameters
-def extract_ground_truth(text):
-    params = re.findall(r'(\w+) = ([\d.]+)', text)
-    return {k: float(v) for k, v in params}
+    # Parse iterations
+    for iteration_match in re.finditer(r'Iteration (\d+)(.*?)(?=Iteration|\Z)', content, re.DOTALL):
+        iteration = int(iteration_match.group(1))
+        iterations.append(iteration)
+        iteration_content = iteration_match.group(2)
 
-# Extract data
-with open('debug.txt', 'r') as file:
-    text = file.read()
+        # Parse parameter values
+        for param in ['a', 'b', 'c', 'd']:
+            param_match = re.search(rf'Parameter p\({param}\)_r0 \[n = 1, mu=tensor\(\[\[(.*?)\]\]\), cov=tensor\(\[\[(.*?)\]\]\)\]', iteration_content)
+            if param_match:
+                mu_data[param].append(float(param_match.group(1)))
+                cov_data[param].append(float(param_match.group(2)))
+            else:
+                mu_data[param].append(None)
+                cov_data[param].append(None)
 
-data = extract_data(text)
-ground_truth = extract_ground_truth(text.split('\n')[0])
+    return ground_truth, iterations, mu_data, cov_data
 
-# Create 6 separate plots
-fig, axs = plt.subplots(3, 2, figsize=(20, 15))
-fig.suptitle('Parameter Evolution over Iterations', fontsize=16)
+# Parse the debug file
+ground_truth, iterations, mu_data, cov_data = parse_debug_file('debug.txt')
 
-for i, (param, values) in enumerate(data.items()):
-    row = i // 2
-    col = i % 2
+# Create the plot
+fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+fig.suptitle('Parameter Estimation over Iterations', fontsize=16)
 
-    ax1 = axs[row, col]
+parameters = ['a', 'b', 'c', 'd']
+
+for idx, param in enumerate(parameters):
+    ax1 = axes[idx // 2, idx % 2]
     ax2 = ax1.twinx()
-
-    iterations = range(len(values['mu']))
-
+    
     # Plot mu
-    line1, = ax1.plot(iterations, values['mu'], 'b-', label='mu')
-    ax1.set_xlabel('Iterations')
+    ax1.plot(iterations, mu_data[param], 'b-', label='mu')
+    ax1.set_xlabel('Iteration')
     ax1.set_ylabel('mu', color='b')
     ax1.tick_params(axis='y', labelcolor='b')
-
+    
     # Plot cov
-    line2, = ax2.plot(iterations, values['cov'], 'r-', label='cov')
+    ax2.plot(iterations, cov_data[param], 'r-', label='cov')
     ax2.set_ylabel('cov', color='r')
     ax2.tick_params(axis='y', labelcolor='r')
-
-    # Add ground truth line
-    if param in ground_truth:
-        line3 = ax1.axhline(y=ground_truth[param], color='g', linestyle='--', label='Ground Truth')
-
-    ax1.set_title(f'{param} Parameter')
-
-    # Add legend
-    lines = [line1, line2, line3] if param in ground_truth else [line1, line2]
-    ax1.legend(lines, [l.get_label() for l in lines])
+    ax2.set_yscale('log')  # Use log scale for covariance
+    
+    # Plot ground truth
+    ax1.axhline(y=ground_truth[idx], color='g', linestyle='--', label='Ground Truth')
+    
+    ax1.set_title(f'Parameter {param}')
+    
+    # Combine legends
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
 
 plt.tight_layout()
 plt.show()
