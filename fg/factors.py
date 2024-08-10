@@ -134,9 +134,13 @@ class DynamicsFactor:
 
     def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
         curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
-        E_sum = np.sum([self.C[self.r, r_id] * self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()[0] for r_id in range(self.graph.nr) if self.r != r_id])
-        I_sum = np.sum([self.C[self.r, r_id] * self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()[1] for r_id in range(self.graph.nr) if self.r != r_id])
-
+        E_sum, I_sum = 0., 0.
+        for r_id in range(self.graph.nr):
+            if r_id == self.r: continue
+            
+            belief = self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()
+            E_sum += self.C[self.r, r_id] * belief[0] 
+            I_sum += self.C[self.r, r_id] * belief[1]
 
         h_ext = Etp - (Et + 0.01 * dEdt(Et, It, E_sum, a, b, 1.))
         h_inh = Itp - (It + 0.01 * dIdt(Et, It, I_sum, c, d, 1.))
