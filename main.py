@@ -5,26 +5,16 @@ from fg.graph import Graph
 from fg.gaussian import Gaussian
 import torch
 import matplotlib.pyplot as plt
-import numpy as np
-import multiprocessing as mp
-
-def process_oscillator(args):
-    t, r = args
-    curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
-    curr.compute_and_send_messages()
-
-def process_dynamics(args):
-    t, r = args
-    factor_graph.factor_nodes[(f'osc_t{t}_r{r}', f'osc_t{t+1}_r{r}')].compute_and_send_messages()
-
+from datetime import datetime
+import random
 
 if __name__ == "__main__":
     sigma_obs = 1e-2
     sigma_dynamics = 1e-3
     sigma_prior = 1e1
-    iters = 150
+    iters = 300
     T = 8
-    nr = 1
+    nr = 10
     dt = 0.05
 
     C = torch.empty((nr, nr)).normal_(0.2, 0.1)
@@ -114,9 +104,9 @@ if __name__ == "__main__":
 
     # === RUN GBP (Sweep schedule) === #
     for iter in range(iters):
-        print(f'Iteration {iter}')
-        for r in range(nr):
-            for a in param_list:
+        print(f'Iteration {iter} {datetime.now().hour:02d}:{datetime.now().minute:02d}:{datetime.now().second:02d}')
+        for a in param_list:
+            for r in range(nr):
                 print(factor_graph.var_nodes[f'p({a})_r{r}'])
 
                 if factor_graph.var_nodes[f'p({a})_r{r}'].belief.eta.isnan().any(): 
@@ -137,31 +127,22 @@ if __name__ == "__main__":
 
             factor_graph.prune()
 
-        # Right Pass
-        for t in range(len(time)-1):
-            # Message pass from the oscillators 
-            for r in range(nr):
-                curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
-                curr.compute_and_send_messages()
-
-                if t+1 == len(time): continue
-
-                # Update dynamical factor
-                factor_graph.factor_nodes[(f'osc_t{t}_r{r}', f'osc_t{t+1}_r{r}')].compute_and_send_messages()
-            
-        factor_graph.update_params() 
-
-        # Left Pass
-        for t in range(len(time)-2, 0, -1):
-            for r in range(nr):
-                curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
-                curr.compute_and_send_messages()
-
-                if t-1 == 0: continue
-
-                # Update dynamical factor
-                factor_graph.factor_nodes[(f'osc_t{t-1}_r{r}', f'osc_t{t}_r{r}')].compute_and_send_messages()
-            
+        # Step 1: Update all variable nodes in random order
+        var_nodes = [(t, r) for t in range(len(time)) for r in range(nr)]
+        random.shuffle(var_nodes)
+        
+        for t, r in var_nodes:
+            curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
+            curr.compute_and_send_messages()
+        
+        # Step 2: Update all factor nodes
+        factor_nodes = [(t, r) for t in range(len(time)-1) for r in range(nr)]
+        random.shuffle(factor_nodes)
+        
+        for t, r in factor_nodes:
+            factor_graph.factor_nodes[(f'osc_t{t}_r{r}', f'osc_t{t+1}_r{r}')].compute_and_send_messages()
+        
+        # Update parameters after each complete iteration
         factor_graph.update_params()
 
 
@@ -175,8 +156,8 @@ if __name__ == "__main__":
 
     E_rec, I_rec = simulate_wc(config)
     plt.plot(E, label='GT E')
-    plt.plot(I, label='GT I')
+    # plt.plot(I, label='GT I')
     plt.plot(E_rec, label='E rec')
-    plt.plot(I_rec, label='I rec')
+    # plt.plot(I_rec, label='I rec')
     plt.legend()
     plt.show()

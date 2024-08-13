@@ -43,16 +43,16 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     E = np.zeros((len(time), nr))
     I = np.zeros((len(time), nr))
 
-    E[0] = 0.3
-    I[0] = 0.4
+    E[0] = 0.0
+    I[0] = 0.0
 
     for t in range(len(time) - 1):
         E_input = np.dot(C, E[t])
         I_input = np.dot(C, I[t])
 
         for r in range(nr):
-            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + (np.random.normal(0, 0.01) if dyn_noise else 0)
-            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + (np.random.normal(0, 0.01) if dyn_noise else 0)
+            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r])
+            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r])
 
     return E, I
 

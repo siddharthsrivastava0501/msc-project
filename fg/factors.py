@@ -5,6 +5,7 @@ from .gaussian import Gaussian
 from .functions import dIdt, sig, dEdt
 import re
 import numpy as np
+from torch.nn.functional import linear, relu
 
 class ObservationFactor:
     def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph, huber = False) -> None:
@@ -55,7 +56,136 @@ class ObservationFactor:
 
     def __str__(self) -> str:
         return f'Obs: [{self.factor_id} -- {self.var_id}], z = {self.z}'
+    
+class EnforcingFactor:
+    '''
+    Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
+    and is also connected to learnable parameters given by `parameters`.
+    '''
+    def __init__(self, ObsV_id, Osc_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False) -> None:
+        self.ObsV_id = ObsV_id
+        self.Osc_id = Osc_id
 
+        self.lmbda_in = lmbda_in
+        self.factor_id = factor_id
+        self.graph : Graph = graph
+
+
+        self.N_sigma = torch.sqrt(lmbda_in)
+        self.z = 0
+
+        self.inbox = {}
+
+        self._connected_vars = [ObsV_id, Osc_id]
+
+        self.huber = huber
+
+    def _h_fn(self, obs, Et, It):
+        return obs - (Et - It)
+    
+
+    def linearise(self) -> Gaussian:
+        '''
+        Returns the linearised Gaussian factor based on equations 2.46 and 2.47 in Ortiz (2023)
+        '''
+
+        # Extracts the means of all the beliefs of our adj.
+        # parameters and gets them ready for autograd
+        connected_variables = []
+        for i in self._connected_vars:
+            mean = self.graph.get_var_belief(i).mean.detach().clone()
+            if mean.numel() > 1: #nD beliefs
+                for j in range(mean.numel()):
+                    connected_variables.append(mean[j].reshape(1, 1).requires_grad_(True))
+            else: #1D beliefs
+                connected_variables.append(mean.reshape(1, 1).requires_grad_(True))
+
+        Obs, Et, It = connected_variables
+
+        # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
+        # Want to minimise the Euler expansion of both the ext. DE and inh. DE
+        self.h = self._h_fn(Obs, Et, It)
+
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Obs, Et, It)), 0)[..., 0, 0].T
+        x0 = torch.concat([v for v in connected_variables], dim=0)
+
+        # Have to transpose the h here because otherwise the dimensions don't line up?
+        # eta = J.T @ (-self.h.T + J @ x0) * self.lmbda_in
+        # lmbda = (J.T @ J) * self.lmbda_in
+
+        eta = (J.T @ self.lmbda_in) @ (-self.h + J @ x0)
+        lmbda = (J.T @ self.lmbda_in) @ J
+
+        return Gaussian.from_canonical(eta.detach(), lmbda.detach())
+
+    def compute_huber(self) -> float:
+        # Equation 3.16 in Ortiz (2023)
+        r = self.z - self.h
+        M = torch.sqrt(r @ self.lmbda_in @ r)
+
+        # Equation 3.20 in Ortiz (2023)
+        if M > self.N_sigma and self.huber:
+            kR = (2 * self.N_sigma / M) - (self.N_sigma**2 / M**2)
+            kR = kR.item()
+        else:
+            kR = 1.
+
+        return kR
+
+    def _compute_message_to_i(self, i, beta = 0.1) -> Gaussian:
+        '''
+        Compute message to variable at index i in `self._vars`,
+        All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
+        '''
+        linearised_factor = self.linearise()
+
+        product = Gaussian.zeros_like(linearised_factor)
+
+        # Build our message product by adding corresponding eta and lambda
+        # in product
+        k = 0
+        for j, id in enumerate(self._connected_vars):
+            if j != i:
+                in_msg = self.inbox.get(id, Gaussian.from_canonical(torch.tensor([0.]), \
+                    torch.tensor([0.])))
+
+                # Element 0 and 1 in self._connected_vars will be the
+                # EI oscillator vars, and they each have a 2D Gaussian as their belief
+                # since they encode Et, It and Etp, Itp respectively. Therefore,
+                # we have to correctly offset our product Gaussian with 2 if
+                # our j is at the 0th or 1st element. Otherwise just continue as
+                # normal.
+                offset = in_msg.eta.numel()
+                product.eta[k : k+offset] += in_msg.eta
+                product.lmbda[k : k+offset, k : k+offset] += in_msg.lmbda
+
+                k += offset
+            else:
+                k += self.graph.var_nodes[self._connected_vars[i]].num_vars
+                # k += 2 if i in [0,1] else 1
+ 
+        factor_product = linearised_factor * product
+
+        start_idx = 0
+        for k in range(i):
+            start_idx += self.graph.var_nodes[self._connected_vars[k]].num_vars
+
+        idx_to_marginalise = list(range(start_idx, start_idx + self.graph.var_nodes[self._connected_vars[i]].num_vars))
+
+        marginal = factor_product.marginalise(idx_to_marginalise)
+
+        kR = 1.
+        marginal *= kR
+
+        return marginal
+
+    def compute_and_send_messages(self) -> None:
+        for i, var_id in enumerate(self._connected_vars):
+            msg = self._compute_message_to_i(i)
+            self.graph.send_msg_to_variable(self.factor_id, var_id, msg)
+
+    def __str__(self):
+        return f'Enforcing: [{self.ObsV_id} -- {self.Osc_id}], z = {self.z}' 
 
 class PriorFactor:
     def __init__(self, factor_id, var_id, z, lmbda_in, graph : Graph, huber = False) -> None:
@@ -131,6 +261,16 @@ class DynamicsFactor:
         self._connected_vars = [Vt_id, Vtp_id] + list(self.parameters)
 
         self.huber = huber
+    
+    def _reshape_mlp_params(self, all_args, a, b):
+        dim = a * b + b
+        args = all_args[:dim]
+        
+        weights = torch.cat([arg.view(-1) for arg in args[:a*b]], dim=0).view(b, a)
+        
+        biases = torch.cat([arg.view(-1) for arg in args[a*b:]], dim=0)
+        
+        return weights, biases, all_args[dim:]
 
     def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
         curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
@@ -142,8 +282,8 @@ class DynamicsFactor:
             E_sum += self.C[self.r, r_id] * belief[0] 
             I_sum += self.C[self.r, r_id] * belief[1]
 
-        h_ext = Etp - (Et + 0.05 * dEdt(Et, It, E_sum, a, b, 1.))
-        h_inh = Itp - (It + 0.05 * dIdt(Et, It, I_sum, c, d, 1.))
+        h_ext = Etp - (Et + 0.02 * dEdt(Et, It, E_sum, a, b, 1.))
+        h_inh = Itp - (It + 0.02 * dIdt(Et, It, I_sum, c, d, 1.))
         return torch.concat([h_ext, h_inh], dim=1)
     
 
@@ -176,8 +316,11 @@ class DynamicsFactor:
         x0 = torch.concat([v for v in connected_variables], dim=0)
 
         # Have to transpose the h here because otherwise the dimensions don't line up?
-        eta = J.T @ (-self.h.T + J @ x0) * self.lmbda_in
-        lmbda = (J.T @ J) * self.lmbda_in
+        # eta = J.T @ (-self.h.T + J @ x0) * self.lmbda_in
+        # lmbda = (J.T @ J) * self.lmbda_in
+
+        eta = (J.T @ self.lmbda_in) @ (-self.h.T + J @ x0)
+        lmbda = (J.T @ self.lmbda_in) @ J 
 
         return Gaussian.from_canonical(eta.detach(), lmbda.detach())
 
@@ -195,7 +338,7 @@ class DynamicsFactor:
 
         return kR
 
-    def _compute_message_to_i(self, i, beta = 0.1) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.05) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
@@ -237,7 +380,7 @@ class DynamicsFactor:
 
         marginal = factor_product.marginalise(idx_to_marginalise)
 
-        kR = 1.
+        kR = self.compute_huber() if self.huber else 1.
         marginal *= kR
 
         prev_msg = self._prev_messages.get(i, Gaussian.zeros_like(marginal))

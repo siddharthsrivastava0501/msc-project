@@ -12,8 +12,8 @@ def parse_debug_file(filename):
 
     # Initialize data structures
     iterations = []
-    mu_data = {'a': [], 'b': [], 'c': [], 'd': []}
-    cov_data = {'a': [], 'b': [], 'c': [], 'd': []}
+    mu_data = {'a': [], 'b': [], 'c': [], 'd': [], 'P' : [], 'Q': []}
+    cov_data = {'a': [], 'b': [], 'c': [], 'd': [], 'P' : [], 'Q': []}
 
     # Parse iterations
     for iteration_match in re.finditer(r'Iteration (\d+)(.*?)(?=Iteration|\Z)', content, re.DOTALL):
@@ -22,7 +22,7 @@ def parse_debug_file(filename):
         iteration_content = iteration_match.group(2)
 
         # Parse parameter values
-        for param in ['a', 'b', 'c', 'd']:
+        for param in ['a', 'b', 'c', 'd', 'P', 'Q']:
             param_match = re.search(rf'Parameter p\({param}\)_r0 \[n = 1, mu=tensor\(\[\[(.*?)\]\]\), cov=tensor\(\[\[(.*?)\]\]\)\]', iteration_content)
             if param_match:
                 mu_data[param].append(float(param_match.group(1)))
@@ -37,10 +37,10 @@ def parse_debug_file(filename):
 ground_truth, iterations, mu_data, cov_data = parse_debug_file('debug.txt')
 
 # Create the plot
-fig, axes = plt.subplots(2, 2, figsize=(15, 15))
+fig, axes = plt.subplots(2, 3, figsize=(15, 15))
 fig.suptitle('Parameter Estimation over Iterations', fontsize=16)
 
-parameters = ['a', 'b', 'c', 'd']
+parameters = ['a', 'b', 'c', 'd', 'P', 'Q']
 
 for idx, param in enumerate(parameters):
     ax1 = axes[idx // 2, idx % 2]
