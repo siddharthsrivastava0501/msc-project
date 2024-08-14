@@ -13,7 +13,6 @@ class ObservationFactor:
         self.var_id = var_id
 
         self.z = z
-        self.Et_z, self.It_z = self.z
 
         self.lmbda_in = lmbda_in
 
@@ -35,8 +34,7 @@ class ObservationFactor:
 
     def compute_huber(self) -> float:
         # Equation 3.16 in Ortiz (2023)
-        r = (self.Et_z - self.graph.get_var_belief(self.var_id).mean[0]) + \
-            (self.It_z - self.graph.get_var_belief(self.var_id).mean[1])
+        r = self.z - self.graph.get_var_belief(self.var_id)
         M = torch.sqrt(r * self.lmbda_in[0,0] * r)
 
         # Equation 3.20 in Ortiz (2023)
@@ -58,10 +56,6 @@ class ObservationFactor:
         return f'Obs: [{self.factor_id} -- {self.var_id}], z = {self.z}'
     
 class EnforcingFactor:
-    '''
-    Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
-    and is also connected to learnable parameters given by `parameters`.
-    '''
     def __init__(self, ObsV_id, Osc_id, lmbda_in : Tensor, factor_id, graph : Graph, huber = False) -> None:
         self.ObsV_id = ObsV_id
         self.Osc_id = Osc_id
@@ -75,6 +69,7 @@ class EnforcingFactor:
         self.z = 0
 
         self.inbox = {}
+        self._prev_messages = {}
 
         self._connected_vars = [ObsV_id, Osc_id]
 
@@ -174,10 +169,16 @@ class EnforcingFactor:
 
         marginal = factor_product.marginalise(idx_to_marginalise)
 
-        kR = 1.
+        kR = self.compute_huber() if self.huber else 1.
         marginal *= kR
 
-        return marginal
+        prev_msg = self._prev_messages.get(i, Gaussian.zeros_like(marginal))
+        damped_factor = (marginal * beta) * (prev_msg * (1 - beta))
+
+        # Store previous message
+        self._prev_messages[i] = damped_factor
+
+        return damped_factor
 
     def compute_and_send_messages(self) -> None:
         for i, var_id in enumerate(self._connected_vars):
