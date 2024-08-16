@@ -95,6 +95,7 @@ class Parameter:
         self.belief = Gaussian.zeros_like(self.belief)
 
         for _, message in self.inbox.items():
+            # print('updating belief with ', message)
             self.belief *= message
 
         # if not torch.is_nonzero(curr.lmbda): print('We Hebben Een Serieus Probleem in the parameter')

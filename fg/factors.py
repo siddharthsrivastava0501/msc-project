@@ -47,7 +47,7 @@ class ObservationFactor:
         return kR
 
     def compute_and_send_messages(self) -> None:
-        kR = 1.
+        kR = self.compute_huber() if self.huber else 1.
 
         message = self.belief * kR
         self.graph.send_msg_to_variable(self.factor_id, self.var_id, message)
@@ -227,14 +227,13 @@ class PriorFactor:
         return kR
 
     def compute_and_send_messages(self) -> None:
-        kR = self.compute_huber()
+        kR = self.compute_huber() if self.huber else 1.
 
         message = self.belief * kR
         self.graph.send_msg_to_variable(self.factor_id, self.var_id, message)
 
     def __str__(self) -> str:
         return f'Prior: [{self.factor_id} -- {self.var_id}], z = {self.z}'
-
 
 class DynamicsFactor:
     '''
@@ -263,28 +262,18 @@ class DynamicsFactor:
 
         self.huber = huber
     
-    def _reshape_mlp_params(self, all_args, a, b):
-        dim = a * b + b
-        args = all_args[:dim]
-        
-        weights = torch.cat([arg.view(-1) for arg in args[:a*b]], dim=0).view(b, a)
-        
-        biases = torch.cat([arg.view(-1) for arg in args[a*b:]], dim=0)
-        
-        return weights, biases, all_args[dim:]
-
     def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
         curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
         E_sum, I_sum = 0., 0.
-        for r_id in range(self.graph.nr):
-            if r_id == self.r: continue
+        # for r_id in range(self.graph.nr):
+        #     if r_id == self.r: continue
             
-            belief = self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()
-            E_sum += self.C[self.r, r_id] * belief[0] 
-            I_sum += self.C[self.r, r_id] * belief[1]
+        #     belief = self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()
+        #     E_sum += self.C[self.r, r_id] * belief[0] 
+        #     I_sum += self.C[self.r, r_id] * belief[1]
 
-        h_ext = Etp - (Et + 0.02 * dEdt(Et, It, E_sum, a, b, 1.))
-        h_inh = Itp - (It + 0.02 * dIdt(Et, It, I_sum, c, d, 1.))
+        h_ext = Etp - (Et + 0.02 * (dEdt(Et, It, E_sum, a, b, 1.)))
+        h_inh = Itp - (It + 0.02 * (dIdt(Et, It, I_sum, c, d, 1.)))
         return torch.concat([h_ext, h_inh], dim=1)
     
 
@@ -339,7 +328,7 @@ class DynamicsFactor:
 
         return kR
 
-    def _compute_message_to_i(self, i, beta = 0.05) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 0.1) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
@@ -373,11 +362,15 @@ class DynamicsFactor:
  
         factor_product = linearised_factor * product
 
+        # print('linearise', linearised_factor)
+        # print('product', product)
+
         start_idx = 0
         for k in range(i):
             start_idx += self.graph.var_nodes[self._connected_vars[k]].num_vars
 
         idx_to_marginalise = list(range(start_idx, start_idx + self.graph.var_nodes[self._connected_vars[i]].num_vars))
+        # print('marginalising idx', idx_to_marginalise)
 
         marginal = factor_product.marginalise(idx_to_marginalise)
 
@@ -395,8 +388,157 @@ class DynamicsFactor:
     def compute_and_send_messages(self) -> None:
         for i, var_id in enumerate(self._connected_vars):
             msg = self._compute_message_to_i(i)
+            # print('sending message', msg, 'from', self.factor_id, 'to', var_id)
             self.graph.send_msg_to_variable(self.factor_id, var_id, msg)
 
     def __str__(self):
         return f'Dynamics: [{self.Vt_id} -- {self.Vtp_id}], z = {self.z}' 
 
+class MLPFactor:
+    def __init__(self, factor_id, var_id, St_id, lmbda_in, graph : Graph, huber = False, param_ids = []):
+        self.var_id = var_id
+        self.St_id = St_id
+        self.factor_id = factor_id
+
+        self.lmbda_in = lmbda_in
+        self.graph = graph
+        self.huber = huber
+
+        self._connected_vars = [var_id] + param_ids
+
+        self.z = 0
+
+        self.inbox = {}
+
+        # Used for message damping, see Ortiz (2023) 3.4.6
+        self._prev_messages = {}
+    
+    def _reshape_mlp_params(self, all_args, a, b):
+        dim = a * b + b
+        args = all_args[:dim]
+        
+        # The first a*b params are the weights, the rest of it is the bias
+        weights = torch.cat([arg.view(-1) for arg in args[:a*b]], dim=0).view(b, a)
+        biases = torch.cat([arg.view(-1) for arg in args[a*b:]], dim=0)
+        
+        return weights, biases, all_args[dim:]
+
+    def _h_fn(self, N_Et, N_It, *weights):
+        Nt = torch.cat([N_Et, N_It], dim=1)
+
+        St = self.graph.get_var_belief(self.St_id).mean.detach().clone().T
+        # St = torch.cat([mean[0], mean[1]], dim=1) 
+
+        layer_sizes = [2,1,2]
+        for l in range(len(layer_sizes)-1):
+            w, b, weights = self._reshape_mlp_params(weights, layer_sizes[l], layer_sizes[l+1])
+            St = linear(St, w, b)
+
+            if l < len(layer_sizes)-2: St = relu(St)
+
+        return Nt - St
+
+    def linearise(self) -> Gaussian:
+        '''
+        Returns the linearised Gaussian factor based on equations 2.46 and 2.47 in Ortiz (2023)
+        '''
+        # Extracts the means of all the beliefs of our adj.
+        # parameters and gets them ready for autograd
+        connected_variables = []
+        for i in self._connected_vars:
+            mean = self.graph.get_var_belief(i).mean.detach().clone()
+            if mean.numel() > 1: #nD beliefs
+                for j in range(mean.numel()):
+                    connected_variables.append(mean[j].reshape(1, 1).requires_grad_(True))
+            else: #1D beliefs
+                connected_variables.append(mean.reshape(1, 1).requires_grad_(True))
+
+        N_Et,N_It = connected_variables[:2]
+        weights = connected_variables[2:]
+
+        self.h = self._h_fn(N_Et, N_It, *weights)
+
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (N_Et, N_It, *weights)), 0)[..., 0, 0].T
+        x0 = torch.concat([v for v in connected_variables], dim=0)
+
+        print(J, x0, self.h)
+
+        eta = (J.T @ self.lmbda_in) @ (-self.h.T + J @ x0)
+        lmbda = (J.T @ self.lmbda_in) @ J 
+        # lmbda += 1e-6
+
+        return Gaussian.from_canonical(eta.detach(), lmbda.detach())
+
+    def compute_huber(self) -> float:
+        # Equation 3.16 in Ortiz (2023)
+        r = self.z - self.h
+        M = torch.sqrt(r @ self.lmbda_in @ r)
+
+        # Equation 3.20 in Ortiz (2023)
+        if M > self.N_sigma and self.huber:
+            kR = (2 * self.N_sigma / M) - (self.N_sigma**2 / M**2)
+            kR = kR.item()
+        else:
+            kR = 1.
+
+        return kR
+
+    def _compute_message_to_i(self, i, beta = 0.1) -> Gaussian:
+        '''
+        Compute message to variable at index i in `self._vars`,
+        All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
+        '''
+        linearised_factor = self.linearise()
+
+        product = Gaussian.zeros_like(linearised_factor)
+
+        # Build our message product by adding corresponding eta and lambda
+        # in product
+        k = 0
+        for j, id in enumerate(self._connected_vars):
+            if j != i:
+                in_msg = self.inbox.get(id, Gaussian.from_canonical(torch.tensor([0.]), \
+                    torch.tensor([0.])))
+
+                offset = in_msg.eta.numel()
+                product.eta[k : k+offset] += in_msg.eta
+                product.lmbda[k : k+offset, k : k+offset] += in_msg.lmbda
+
+                k += offset
+            else:
+                k += self.graph.var_nodes[self._connected_vars[i]].num_vars
+                # k += 2 if i in [0,1] else 1
+ 
+        factor_product = linearised_factor * product
+
+        # print('linearise', linearised_factor)
+        # print('product', product)
+
+        start_idx = 0
+        for k in range(i):
+            start_idx += self.graph.var_nodes[self._connected_vars[k]].num_vars
+
+        idx_to_marginalise = list(range(start_idx, start_idx + self.graph.var_nodes[self._connected_vars[i]].num_vars))
+        # print('marginalising idx', idx_to_marginalise)
+
+        marginal = factor_product.marginalise(idx_to_marginalise)
+
+        kR = self.compute_huber() if self.huber else 1.
+        marginal *= kR
+
+        prev_msg = self._prev_messages.get(i, Gaussian.zeros_like(marginal))
+        damped_factor = (marginal * beta) * (prev_msg * (1 - beta))
+
+        # Store previous message
+        self._prev_messages[i] = damped_factor
+
+        return damped_factor
+
+    def compute_and_send_messages(self) -> None:
+        for i, var_id in enumerate(self._connected_vars):
+            msg = self._compute_message_to_i(i)
+            # print('sending message', msg, 'from', self.factor_id, 'to', var_id)
+            self.graph.send_msg_to_variable(self.factor_id, var_id, msg)
+
+    def __str__(self):
+        return f'MLP: St {self.St_id} Var: {self.var_id}'  
