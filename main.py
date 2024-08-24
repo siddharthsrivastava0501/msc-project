@@ -1,5 +1,5 @@
 from fg.variables import Variable, Parameter
-from fg.factors import DynamicsFactor, ObservationFactor, PriorFactor
+from fg.factors import DynamicsFactor, ObservationFactor, PriorFactor, MLPFactor
 from fg.simulation_config import simulate_wc
 from fg.graph import Graph
 from fg.gaussian import Gaussian
@@ -26,6 +26,7 @@ if __name__ == "__main__":
     T = 8
     nr = 1
     dt = 0.05
+    nn_param_count = 7
 
     C = torch.empty((nr, nr)).normal_(0.2, 0.1)
     C.fill_diagonal_(0.)
@@ -41,6 +42,7 @@ if __name__ == "__main__":
         'd': torch.empty((nr,)).normal_(3., 1.),
         'P': torch.empty((nr,)).normal_(1., 0.),
         'Q': torch.empty((nr,)).normal_(1., 0.),
+        'dyn_noise' : False
     }
 
     E, I = simulate_wc(config)
@@ -52,6 +54,7 @@ if __name__ == "__main__":
     factor_graph = Graph(nr)
 
     param_list = ['a', 'b', 'c', 'd']
+    nn_weights = [f'w{i}' for i in range(nn_param_count)]
 
     # -- Construct FG -- #
     # Add our variable and observation factors at each time step
@@ -72,6 +75,18 @@ if __name__ == "__main__":
                 lmbda_in  = torch.tensor([[sigma_obs ** -2, 0.], [0., sigma_obs ** -2]]),
                 graph     = factor_graph
             )
+
+            # Add our MLP factor 
+            if t+1 < len(time):
+                factor_graph.factor_nodes[f'nn_factor_t{t}_r{r}'] = MLPFactor(
+                    factor_id = f'nn_factor_t{t}_r{r}', 
+                    var_id = f'nn_var_t{t}_r{r}',
+                    St_id =  f'osc_t{t}_r{r}',
+                    lmbda_in = torch.tensor([[1e-1 ** -2., 0.], [0., 1e-1 ** -2]]),
+                    graph = factor_graph,
+                    param_ids = nn_weights
+                )
+
         
     # Add parameters to each region
     for p in param_list:
@@ -95,6 +110,24 @@ if __name__ == "__main__":
                 graph = factor_graph
             )
 
+    # Add our NN weights
+    for wi in nn_weights:
+        factor_graph.var_nodes[wi] = Parameter(
+            id = wi,
+            belief = Gaussian(torch.tensor([[0.]]), torch.tensor([[0.2]])),
+            graph = factor_graph,
+            connected_factors = [f'nn_factor_t{t}_r{r}' for t in range(len(time)) for r in range(nr) if t+1 < len(time)],
+            num_vars = 1
+        )
+
+        factor_graph.factor_nodes[f'{wi}_prior'] = PriorFactor(
+            factor_id = f'{wi}_prior',
+            var_id = p_id,
+            z = torch.tensor([[0.]]).T, 
+            lmbda_in = torch.diag(torch.tensor([sigma_prior ** -2])),
+            graph = factor_graph
+        )
+
     # Add the dynamics factors between timesteps in every region
     for r in range(nr):
         for t in range(len(time)):
@@ -111,6 +144,21 @@ if __name__ == "__main__":
                     connected_params = [f'p({p})_r{r}' for p in param_list]
                 )
 
+                factor_graph.var_nodes[f'nn_var_t{t}_r{r}'] = Variable(
+                    id = f'nn_var_t{t}_r{r}',
+                    belief = Gaussian(torch.tensor([[0.]]), torch.tensor([[0.2]])),
+                    graph = factor_graph,
+                    connected_factors = [f'nn_factor_t{t}_r{r}', dyn_id],
+                    num_vars = 1
+                )
+
+                factor_graph.factor_nodes[f'nn_var_t{t}_r{r}_prior'] = PriorFactor(
+                    factor_id = f'nn_var_t{t}_r{r}_prior',
+                    var_id = p_id,
+                    z = torch.tensor([[0.]]).T, 
+                    lmbda_in = torch.diag(torch.tensor([sigma_prior ** -2])),
+                    graph = factor_graph
+                ) 
 
     # === RUN GBP (Sweep schedule) === #
     for iter in range(iters):
@@ -137,31 +185,14 @@ if __name__ == "__main__":
 
             factor_graph.prune()
 
-        # Right Pass
-        for t in range(len(time)-1):
-            # Message pass from the oscillators 
-            for r in range(nr):
-                curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
-                curr.compute_and_send_messages()
+        for i in factor_graph.var_nodes:
+            curr = factor_graph.var_nodes[i]
+            curr.compute_and_send_messages()
+        
+        for i in factor_graph.factor_nodes:
+            curr = factor_graph.factor_nodes[i]
+            curr.compute_and_send_messages() 
 
-                if t+1 == len(time): continue
-
-                # Update dynamical factor
-                factor_graph.factor_nodes[(f'osc_t{t}_r{r}', f'osc_t{t+1}_r{r}')].compute_and_send_messages()
-            
-        factor_graph.update_params() 
-
-        # Left Pass
-        for t in range(len(time)-2, 0, -1):
-            for r in range(nr):
-                curr = factor_graph.var_nodes[f'osc_t{t}_r{r}']
-                curr.compute_and_send_messages()
-
-                if t-1 == 0: continue
-
-                # Update dynamical factor
-                factor_graph.factor_nodes[(f'osc_t{t-1}_r{r}', f'osc_t{t}_r{r}')].compute_and_send_messages()
-            
         factor_graph.update_params()
 
 
