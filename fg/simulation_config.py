@@ -30,7 +30,8 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     tauE = config.get('tauE', torch.full((nr,), 1.))
     tauI = config.get('tauI', torch.full((nr,), 2.))
     C = config.get('C', _initial_C(nr))
-    dyn_noise = config.get('dyn_noise', True)
+    dyn_noise = config.get('dyn_noise', 0.)
+    obs_noise = config.get('obs_noise', 0.)
     
     simulation_info = (
         f"Running simulation with: "
@@ -51,8 +52,11 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
         I_input = np.dot(C, I[t])
 
         for r in range(nr):
-            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + (np.random.normal(0, 0.005) if dyn_noise else 0)
-            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + (np.random.normal(0, 0.005) if dyn_noise else 0)
+            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+
+    E += np.random.normal(0, obs_noise, E.shape)
+    I += np.random.normal(0, obs_noise, I.shape)
 
     return E, I
 
