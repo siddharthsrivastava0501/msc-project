@@ -33,12 +33,12 @@ def Si(x):
 def tanh(x) -> Tensor:
     return 2*sig(2*x) - 1
 
-def dEdt(Ei, Ii, E_ext, ai = 10., bi = 12., P = 0.2, tau_E = 1., act = Se, G = 0.8) -> Tensor:
-    de = (-Ei + act(ai*Ei - bi*Ii + P + G*E_ext)) / tau_E
+def dEdt(Ei, Ii, E_ext, ai = 10., bi = 12., P = 0.2, tau_E = 1., act = Se, G = 0.8, r = 0.) -> Tensor:
+    de = (-Ei + (1 - r*Ei)*act(ai*Ei - bi*Ii + P + G*E_ext)) / tau_E
     return de
 
-def dIdt(Ei, Ii, I_ext, ci = 9., di = 3., Q = 0.2, tau_I = 2., act = Si, G = 0.8) -> Tensor:
-    di = (-Ii + act(ci*Ei - di*Ii + Q - G*I_ext)) / tau_I
+def dIdt(Ei, Ii, I_ext, ci = 9., di = 3., Q = 0.2, tau_I = 2., act = Si, G = 0.8, r =  0) -> Tensor:
+    di = (-Ii + (1 - r*Ii)*act(ci*Ei - di*Ii + Q - G*I_ext)) / tau_I
     return di
 
 def hdEdt_dIdt(X, Y, a, omega, beta):

@@ -139,7 +139,7 @@ class DynamicsFactor:
 
         self.huber = huber
 
-    def _h_fn(self, Et, It, Etp, Itp, a, b, c, d):
+    def _h_fn(self, Et, It, Etp, Itp, a, b, c, d, P, Q):
         curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
         E_sum, I_sum = 0., 0.
         for r_id in range(self.graph.nr):
@@ -149,8 +149,8 @@ class DynamicsFactor:
             E_sum += self.C[self.r, r_id] * belief[0] 
             I_sum += self.C[self.r, r_id] * belief[1]
 
-        h_ext = Etp - (Et + 0.05 * (dEdt(Et, It, E_sum, a, b, 1.)))
-        h_inh = Itp - (It + 0.05 * (dIdt(Et, It, I_sum, c, d, 1.)))
+        h_ext = Etp - (Et + 0.05 * (dEdt(Et, It, E_sum, a, b, P)))
+        h_inh = Itp - (It + 0.05 * (dIdt(Et, It, I_sum, c, d, Q)))
         return torch.concat([h_ext, h_inh], dim=1)
     
 
@@ -172,13 +172,13 @@ class DynamicsFactor:
 
         Et_mu, It_mu = connected_variables[0:2]
         Etp_mu, Itp_mu = connected_variables[2:4]
-        a,b,c,d = connected_variables[4:]
+        a,b,c,d,P,Q = connected_variables[4:]
 
         # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
         # Want to minimise the Euler expansion of both the ext. DE and inh. DE
-        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d)
+        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)
 
-        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d)), 0)[..., 0, 0].T
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)), 0)[..., 0, 0].T
 
         x0 = torch.concat([v for v in connected_variables], dim=0)
 
