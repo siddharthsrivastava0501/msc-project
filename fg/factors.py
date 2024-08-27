@@ -202,7 +202,7 @@ class DynamicsFactor:
 
         return kR
 
-    def _compute_message_to_i(self, i, beta = 0.3) -> Gaussian:
+    def _compute_message_to_i(self, i, beta = 1e-1) -> Gaussian:
         '''
         Compute message to variable at index i in `self._vars`,
         All of this is eqn 8 from 'Learning in Deep Factor Graphs with Gaussian Belief Propagation'
