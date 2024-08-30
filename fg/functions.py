@@ -30,8 +30,14 @@ def Si(x):
     thrI = 3.7
     return sig(x, thrI, aI) - sig(0, thrI, aI)
 
+def silu(x) -> Tensor:
+    return x / (1 + torch.exp(-x))
+
 def tanh(x) -> Tensor:
     return 2*sig(2*x) - 1
+
+def softplus(x) -> Tensor:
+    return torch.log(1 + torch.exp(x))
 
 def dEdt(Ei, Ii, E_ext, ai = 10., bi = 12., P = 0.2, tau_E = 1., act = Se, G = 0.8, r = 0.) -> Tensor:
     de = (-Ei + (1 - r*Ei)*act(ai*Ei - bi*Ii + P + G*E_ext)) / tau_E
