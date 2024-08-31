@@ -20,6 +20,16 @@ def pairwise_difference_matrix(x):
 
     return D.numpy()
 
+def reshape_mlp_params(all_args, a, b):
+    dim = a * b + b
+    args = all_args[:dim]
+    
+    # The first a*b params are the weights, the rest of it is the bias
+    weights = torch.cat([arg.view(-1) for arg in args[:a*b]], dim=0).view(b, a)
+    biases = torch.cat([arg.view(-1) for arg in args[a*b:]], dim=0)
+    
+    return weights, biases, all_args[dim:]
+
 def Se(x):
     aE = 1.3
     thrE = 4

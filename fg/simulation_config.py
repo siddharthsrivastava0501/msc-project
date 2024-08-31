@@ -1,13 +1,23 @@
 import torch
 from torch import Tensor
-from .functions import dEdt, dIdt, sig
+from .functions import dEdt, dIdt, reshape_mlp_params, sig, Se, Si
 import numpy as np
+from torch.nn.functional import relu, linear, leaky_relu
 
 def _initial_C(nr):
     C = torch.empty((nr, nr)).normal_(0.2, 0.1)
     C.fill_diagonal_(0.)
 
     return C
+
+def pass_through_NN(St, weights, layer_sizes):
+    for l in range(len(layer_sizes)-1):
+        w, b, weights = reshape_mlp_params(weights, layer_sizes[l], layer_sizes[l+1])
+        St = linear(St, w, b)
+
+        if l < len(layer_sizes)-2: St = leaky_relu(St)
+
+    return St
 
 def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     '''
@@ -32,11 +42,16 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     C = config.get('C', _initial_C(nr))
     dyn_noise = config.get('dyn_noise', 0.)
     obs_noise = config.get('obs_noise', 0.)
-    
+    nn_weights = config.get('nn_weights', False)
+    layer_sizes = config.get('layer_sizes', [])
+    E_act = config.get('E_act', Se)
+    I_act = config.get('E_act', Si)
+
     simulation_info = (
         f"Running simulation with: "
         f"T = {T}, dt = {dt}, nr = {nr}, a = {a}, b = {b}, c = {c}, d = {d}, "
-        f"P = {P}, Q = {Q}, tauE = {tauE}, tauI = {tauI}, nr = {nr}"
+        f"P = {P}, Q = {Q}, tauE = {tauE}, tauI = {tauI}, nr = {nr}, "
+        f"E_act = {E_act}, I_act = {I_act}"
     )
     print(simulation_info)
 
@@ -52,8 +67,10 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
         I_input = np.dot(C, I[t])
 
         for r in range(nr):
-            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
-            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+            St = pass_through_NN(torch.cat([torch.tensor([[E[t,r]]]).float(), torch.tensor([[I[t,r]]]).float()], dim=1), nn_weights, layer_sizes) if nn_weights else np.array([[0., 0.]])
+            NN_Et, NN_It =  St[0,0], St[0,1]
+            E[t+1, r] = E[t, r] + dt*(dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r], E_act) + NN_Et) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+            I[t+1, r] = I[t, r] + dt*(dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r], I_act) + NN_It) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
 
     E += np.random.normal(0, obs_noise, E.shape)
     I += np.random.normal(0, obs_noise, I.shape)
