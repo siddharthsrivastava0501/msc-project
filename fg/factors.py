@@ -2,7 +2,7 @@ import torch
 from torch import Tensor
 from .graph import Graph
 from .gaussian import Gaussian
-from .functions import dIdt, dEdt, reshape_mlp_params, sig
+from .functions import h_dXdt, h_dYdt, reshape_mlp_params, dEdt, dIdt
 import re
 import numpy as np
 import random
@@ -153,6 +153,20 @@ class DynamicsFactor:
         h_inh = Itp - (It + 0.05*(dIdt(Et, It, I_sum, c, d, Q)))
         return torch.concat([h_ext, h_inh], dim=1)
     
+    def hopf_h_fn(self, Et, It, Etp, Itp, a, omega):
+        curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
+        X_ext, Y_ext = 0., 0.
+        for r_id in range(self.graph.nr):
+            if r_id == self.r: continue
+            
+            belief = self.graph.get_var_belief(f'osc_t{curr_t}_r{r_id}').mean.detach().clone()
+            X_ext += self.C[self.r, r_id] * belief[0]
+            Y_ext += self.C[self.r, r_id] * belief[1]
+
+        h_ext = Etp - (Et + 0.01*(h_dXdt(Et, It, a, omega, X_ext)))
+        h_inh = Itp - (It + 0.01*(h_dYdt(Et, It, a, omega, Y_ext)))
+        return torch.concat([h_ext, h_inh], dim=1)
+    
 
     def linearise(self) -> Gaussian:
         '''
@@ -172,13 +186,13 @@ class DynamicsFactor:
 
         Et_mu, It_mu = connected_variables[0:2]
         Etp_mu, Itp_mu = connected_variables[2:4]
-        a,b,c,d,P,Q = connected_variables[4:]
+        a,omega = connected_variables[4:]
 
         # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
         # Want to minimise the Euler expansion of both the ext. DE and inh. DE
-        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)
+        self.h = self.hopf_h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, omega)
 
-        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)), 0)[..., 0, 0].T
+        J = torch.concat(torch.autograd.functional.jacobian(self.hopf_h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, omega)), 0)[..., 0, 0].T
 
         x0 = torch.concat([v for v in connected_variables], dim=0)
 

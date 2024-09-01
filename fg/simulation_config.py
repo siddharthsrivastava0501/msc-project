@@ -69,8 +69,8 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
         for r in range(nr):
             St = pass_through_NN(torch.cat([torch.tensor([[E[t,r]]]).float(), torch.tensor([[I[t,r]]]).float()], dim=1), nn_weights, layer_sizes) if nn_weights else np.array([[0., 0.]])
             NN_Et, NN_It =  St[0,0], St[0,1]
-            E[t+1, r] = E[t, r] + dt*(dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r], E_act) + NN_Et) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
-            I[t+1, r] = I[t, r] + dt*(dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r], I_act) + NN_It) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+            E[t+1, r] = E[t, r] + dt*(dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r], E_act) + NN_Et + np.random.normal(0, dyn_noise))
+            I[t+1, r] = I[t, r] + dt*(dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r], I_act) + NN_It + np.random.normal(0, dyn_noise))
 
     E += np.random.normal(0, obs_noise, E.shape)
     I += np.random.normal(0, obs_noise, I.shape)
@@ -102,9 +102,15 @@ def simulate_hopf(config : dict):
     )
     print(simulation_info)
 
+    X[0] = 0.3
+    Y[0] = 0.4
+
     for t in range(len(time) - 1):
+        X_input = np.dot(C, X[t])
+        Y_input = np.dot(C, Y[t])
+
         for r in range(nr):
-            X[t+1, r] = X[t, r] + dt * (h_dXdt(X[t, r], Y[t, r], a[r], omega[r]) + np.random.normal(0, beta))
-            Y[t+1, r] = Y[t, r] + dt * (h_dYdt(X[t, r], Y[t, r], a[r], omega[r]) + np.random.normal(0, beta))
+            X[t+1, r] = X[t, r] + dt * (h_dXdt(X[t, r], Y[t, r], a[r], omega[r], X_input[r]) + np.random.normal(0, beta[r]))
+            Y[t+1, r] = Y[t, r] + dt * (h_dYdt(X[t, r], Y[t, r], a[r], omega[r], Y_input[r]) + np.random.normal(0, beta[r]))
 
     return X, Y
