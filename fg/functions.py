@@ -57,6 +57,13 @@ def dIdt(Ei, Ii, I_ext, ci = 9., di = 3., Q = 0.2, tau_I = 2., act = Si, G = 0.8
     di = (-Ii + (1 - r*Ii)*act(ci*Ei - di*Ii + Q - G*I_ext)) / tau_I
     return di
 
+
+def h_dXdt(Xt, Yt, a, omega):
+    return (a - Xt**2 - Yt**2) * Xt - omega * Yt
+
+def h_dYdt(Xt, Yt, a, omega):
+    return (a - Xt**2 - Yt**2) * Yt + omega * Xt
+
 def hdEdt_dIdt(X, Y, a, omega, beta):
     '''
     We have to combine the dEdt and the dIdt for the Hopf model since they use

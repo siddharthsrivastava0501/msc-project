@@ -117,9 +117,8 @@ class DynamicsFactor:
     Represents a dynamics factor that enforces dynamics between `Et_id` (left) and `Etp_id` (right),
     and is also connected to learnable parameters given by `parameters`.
     '''
-    def __init__(self, Vt_id, Vtp_id, nn_var_id, region_id, conn, lmbda_in : Tensor, factor_id, graph : Graph, huber = False, connected_params = []) -> None:
+    def __init__(self, Vt_id, Vtp_id, region_id, conn, lmbda_in : Tensor, factor_id, graph : Graph, huber = False, connected_params = []) -> None:
         self.Vt_id, self.Vtp_id = Vt_id, Vtp_id
-        self.nn_var_id = nn_var_id
         self.r = region_id
         self.C = conn
         self.lmbda_in = lmbda_in
@@ -136,11 +135,11 @@ class DynamicsFactor:
         # Used for message damping, see Ortiz (2023) 3.4.6
         self._prev_messages = {}
 
-        self._connected_vars = [Vt_id, Vtp_id, nn_var_id] + list(self.parameters)
+        self._connected_vars = [Vt_id, Vtp_id] + list(self.parameters)
 
         self.huber = huber
 
-    def _h_fn(self, Et, It, Etp, Itp, NN_Et, NN_It, a, b, c, d, P, Q):
+    def _h_fn(self, Et, It, Etp, Itp, a, b, c, d, P, Q):
         curr_t = re.search('osc_t(.*)_', self.Vt_id).group(1)
         E_sum, I_sum = 0., 0.
         for r_id in range(self.graph.nr):
@@ -150,8 +149,8 @@ class DynamicsFactor:
             E_sum += self.C[self.r, r_id] * belief[0] 
             I_sum += self.C[self.r, r_id] * belief[1]
 
-        h_ext = Etp - (Et + 0.05*(dEdt(Et, It, E_sum, a, b, P) + NN_Et))
-        h_inh = Itp - (It + 0.05*(dIdt(Et, It, I_sum, c, d, Q) + NN_It))
+        h_ext = Etp - (Et + 0.05*(dEdt(Et, It, E_sum, a, b, P)))
+        h_inh = Itp - (It + 0.05*(dIdt(Et, It, I_sum, c, d, Q)))
         return torch.concat([h_ext, h_inh], dim=1)
     
 
@@ -173,14 +172,13 @@ class DynamicsFactor:
 
         Et_mu, It_mu = connected_variables[0:2]
         Etp_mu, Itp_mu = connected_variables[2:4]
-        NN_Et, NN_It = connected_variables[4:6]
-        a,b,c,d,P,Q = connected_variables[6:]
+        a,b,c,d,P,Q = connected_variables[4:]
 
         # Measurement function h = Etp - (Et + deltaT * dEdt) + Itp - (It + deltaT * dIdt)
         # Want to minimise the Euler expansion of both the ext. DE and inh. DE
-        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, NN_Et, NN_It, a, b, c, d, P, Q)
+        self.h = self._h_fn(Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)
 
-        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, NN_Et, NN_It, a, b, c, d, P, Q)), 0)[..., 0, 0].T
+        J = torch.concat(torch.autograd.functional.jacobian(self._h_fn, (Et_mu, It_mu, Etp_mu, Itp_mu, a, b, c, d, P, Q)), 0)[..., 0, 0].T
 
         x0 = torch.concat([v for v in connected_variables], dim=0)
 
