@@ -59,8 +59,8 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     E = np.zeros((len(time), nr))
     I = np.zeros((len(time), nr))
 
-    E[0] = 0.3
-    I[0] = 0.4
+    E[0] = 0.0
+    I[0] = 0.0
 
     for t in range(len(time) - 1):
         E_input = np.dot(C, E[t])
