@@ -1,7 +1,8 @@
 import torch
 from torch import Tensor
-from .functions import dEdt, dIdt, sig
+from .functions import dEdt, dIdt, h_dXdt, h_dYdt
 import numpy as np
+import datetime
 
 def _initial_C(nr):
     C = torch.empty((nr, nr)).normal_(0.2, 0.1)
@@ -34,7 +35,7 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     obs_noise = config.get('obs_noise', 0.)
     
     simulation_info = (
-        f"Running simulation with: "
+        f"Running simulation at {datetime.datetime.now()} with: "
         f"T = {T}, dt = {dt}, nr = {nr}, a = {a}, b = {b}, c = {c}, d = {d}, "
         f"P = {P}, Q = {Q}, tauE = {tauE}, tauI = {tauI}, nr = {nr}"
     )
@@ -44,16 +45,16 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     E = np.zeros((len(time), nr))
     I = np.zeros((len(time), nr))
 
-    E[0] = 0.3
-    I[0] = 0.4
+    E[0] = 0.0
+    I[0] = 0.0
 
     for t in range(len(time) - 1):
         E_input = np.dot(C, E[t])
         I_input = np.dot(C, I[t])
 
         for r in range(nr):
-            E[t+1, r] = E[t, r] + dt * dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
-            I[t+1, r] = I[t, r] + dt * dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + (np.random.normal(0, dyn_noise) if dyn_noise else 0)
+            E[t+1, r] = E[t, r] + dt*(dEdt(E[t, r], I[t, r], E_input[r], a[r], b[r], P[r], tauE[r]) + np.random.normal(0, dyn_noise))
+            I[t+1, r] = I[t, r] + dt*(dIdt(E[t, r], I[t, r], I_input[r], c[r], d[r], Q[r], tauI[r]) + np.random.normal(0, dyn_noise))
 
     E += np.random.normal(0, obs_noise, E.shape)
     I += np.random.normal(0, obs_noise, I.shape)
@@ -61,21 +62,39 @@ def simulate_wc(config : dict) -> tuple[Tensor, Tensor]:
     return E, I
 
 def simulate_hopf(config : dict):
-    np.random.seed(42)
+    # https://www.nature.com/articles/s41598-017-03073-5
+    T = config.get('T', 6.)
+    dt = config.get('dt', 0.05)
+    nr = config.get('nr', 5)
 
-    T = config.get('T', 10.)
-    dt = config.get('dt', 0.01)
-    a = config.get('a', -0.02)
-    omega = config.get('omega', 0.1)
-    beta = config.get('beta', 0.02)
+    torch.empty((nr,)).normal_(5.)
 
-    times = torch.arange(0, T + dt, dt)
-    X = torch.zeros(len(times))
-    Y = torch.zeros(len(times))
+    a = config.get('a', torch.empty((nr,)).normal_(3., 1.))
+    omega = config.get('omega', torch.empty((nr,)).normal_(5., 1.))
+    beta = config.get('beta', torch.empty((nr,)).normal_(4., 1.))
 
-    for t in range(len(times) - 1):
-        noise = np.random.normal(0, beta)
-        X[t+1] = X[t] + dt * ((a - X[t]**2 - Y[t]**2) * X[t] - omega * Y[t] + noise)
-        Y[t+1] = Y[t] + dt * ((a - X[t]**2 - Y[t]**2) * Y[t] + omega * X[t] + noise)
+    C = config.get('C', _initial_C(nr))
+    obs_noise = config.get('obs_noise', 0.)
+
+    time = torch.arange(0, T + dt, dt)
+    X = np.zeros((len(time), nr))
+    Y = np.zeros((len(time), nr))
+
+    simulation_info = (
+        f"Running simulation at {datetime.datetime.now()} with: "
+        f"T = {T}, dt = {dt}, nr = {nr}, a = {a}, omega = {omega}, beta = {beta}"
+    )
+    print(simulation_info)
+
+    X[0] = 0.3
+    Y[0] = 0.4
+
+    for t in range(len(time) - 1):
+        X_input = np.dot(C, X[t])
+        Y_input = np.dot(C, Y[t])
+
+        for r in range(nr):
+            X[t+1, r] = X[t, r] + dt * (h_dXdt(X[t, r], Y[t, r], a[r], omega[r], X_input[r]) + np.random.normal(0, beta[r]))
+            Y[t+1, r] = Y[t, r] + dt * (h_dYdt(X[t, r], Y[t, r], a[r], omega[r], Y_input[r]) + np.random.normal(0, beta[r]))
 
     return X, Y
